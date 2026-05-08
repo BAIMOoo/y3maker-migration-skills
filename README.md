@@ -1,4 +1,4 @@
-﻿# Y3Maker 迁移 Skills
+# Y3Maker 迁移 Skills
 
 这个仓库收集了一组迁移 skill，用于把遗留的 Y3Maker / CodeMaker 项目助手资产迁移到新的 Agent 原生目录结构中。
 
@@ -28,22 +28,25 @@ sync-y3maker-to-claude/    # Claude Code skill 包
 
 ## 安装
 
+不要手动照搬目录结构；建议直接在对应 Agent 里发送安装请求，让 Agent 按当前环境完成安装和校验。
+
 ### Codex
 
-把 Codex skill 复制到 Codex skills 目录：
+在 Codex 中发送：
 
-```powershell
-Copy-Item -Recurse .\sync-y3maker-to-codex "$HOME\.codex\skills\sync-y3maker-to-codex"
+```text
+请从 GitHub 仓库 https://github.com/BAIMOoo/y3maker-migration-skills 安装 sync-y3maker-to-codex skill，并确认安装后可以被当前 Codex 环境识别。
 ```
 
 ### Claude Code
 
-把 Claude Code skill 复制到 Claude skills 目录：
+在 Claude Code 中发送：
 
-```powershell
-Copy-Item -Recurse .\sync-y3maker-to-claude "$HOME\.claude\skills\sync-y3maker-to-claude"
+```text
+请从 GitHub 仓库 https://github.com/BAIMOoo/y3maker-migration-skills 安装 sync-y3maker-to-claude skill，并确认安装后可以被当前 Claude Code 环境识别。
 ```
 
+如果你的 Agent 支持项目级 skill，也可以在 prompt 中补充“安装到当前项目级目录”；否则默认安装到用户级 skill 目录即可。
 ## 使用方式
 
 进入对应 skill 目录，阅读其中的 `SKILL.md`，按以下流程执行：
