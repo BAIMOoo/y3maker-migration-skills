@@ -1,0 +1,7 @@
+interface:
+  display_name: "Y3Maker 迁移"
+  short_description: "迁移并同步遗留 .y3maker 或 .codemaker 项目助手内容到 .codex/.omx。"
+  default_prompt: "使用 $sync-y3maker-to-codex 迁移这个工作区里的遗留 .y3maker 内容，并检查是否需要把新变更同步到现有 .codex 副本。"
+
+policy:
+  allow_implicit_invocation: true

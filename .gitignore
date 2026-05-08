@@ -1,0 +1,31 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+cmtmp/
+
+# Dependency/build output
+node_modules/
+dist/
+build/
+coverage/
+
+# Generated migration state from local test runs
+**/migration/y3maker-manifest.json
+**/.codex/
+**/.claude/
+**/.y3maker/
+**/.omx/
+**/.mcp.json
+
+# User-level config/secrets should never be committed
+.claude.json
+config.toml
+.env
+.env.*
