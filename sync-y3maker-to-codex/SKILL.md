@@ -52,8 +52,8 @@ node ".codex/skills/sync-y3maker-to-codex/scripts/run-migration.js" apply --work
 
 脚本会自动完成这些机械步骤：
 
-- 创建 `.codex/knowledge`、`.codex/memory`、`.codex/rules`、`.codex/skills`
-- 复制 `.y3maker/knowledge`、`.y3maker/memory`、`.y3maker/rules`、`.y3maker/skills`
+- 创建 `.codex/knowledge`、`.codex/memory`、`.codex/rules`、`.codex/skills`、`.codex/templates`
+- 复制 `.y3maker/knowledge`、`.y3maker/memory`、`.y3maker/rules`、`.y3maker/skills`；如存在 `.y3maker/templates` 或旧 `.codemaker/templates`，同步到 `.codex/templates`
 - 跳过旧体系冗余文件，例如 `skills/README.md`、`install_skills.bat`、`.queue`、`.claude-plugin`
 - 把迁移副本里的 `.codemaker` 路径改写为 `.codex`
 - 规范化迁移后 `SKILL.md` frontmatter，只保留 `name` 和 `description`
@@ -119,7 +119,7 @@ manifest 位于：
 
 最终汇报至少要说明：
 
-- 实际迁移或同步到了 `.codex/` 的目录和文件
+- 实际迁移或同步到了 `.codex/` 的目录和文件（包括 `.codex/templates`，如果源模板目录存在）
 - 做了哪些路径改写或规范化
 - 哪些内容被保留为归档，哪些被跳过
 - 本次是首次迁移还是重复同步

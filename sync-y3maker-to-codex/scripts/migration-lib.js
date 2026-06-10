@@ -18,7 +18,9 @@ const TEXT_SUFFIXES = new Set([
   ".yml",
 ]);
 const COPY_TREE_NAMES = ["knowledge", "memory", "rules"];
-const CODEX_DIR_NAMES = ["knowledge", "memory", "rules", "skills", "migration"];
+const LEGACY_ROOT_CANDIDATES = [".y3maker", ".codemaker"];
+const TEMPLATE_TREE_NAME = "templates";
+const CODEX_DIR_NAMES = ["knowledge", "memory", "rules", "skills", "templates", "migration"];
 const DEFAULT_OPENSPEC_DIRS = ["openspec/docs", "openspec/reports"];
 const EXTRA_CODEX_TEMP_DIRS = ["cmtmp"];
 const SKILL_ITEM_EXCLUDES = {
@@ -148,10 +150,15 @@ function hashExistingFile(filePath) {
   if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
     return null;
   }
+  const raw = fs.readFileSync(filePath);
   if (TEXT_SUFFIXES.has(path.extname(filePath).toLowerCase())) {
-    return hashBuffer(Buffer.from(readText(filePath).replace(/\r\n/g, "\n"), "utf8"));
+    try {
+      return hashBuffer(Buffer.from(readText(filePath).replace(/\r\n/g, "\n"), "utf8"));
+    } catch (error) {
+      return hashBuffer(raw);
+    }
   }
-  return hashBuffer(fs.readFileSync(filePath));
+  return hashBuffer(raw);
 }
 
 function emptyManifest() {
@@ -212,6 +219,7 @@ function inventoryWorkspace(workspace) {
       orphanedTargets: manifestEntries.filter((entry) => entry.status === "orphaned").length,
     },
     legacy: {},
+    codemaker: {},
   };
   if (fs.existsSync(paths.legacy)) {
     result.legacy = {
@@ -226,6 +234,17 @@ function inventoryWorkspace(workspace) {
       memory: sortedEntries(path.join(paths.legacy, "memory")),
       hasMcpSettings: fs.existsSync(path.join(paths.legacy, "mcp_settings.json")),
     };
+  }
+  const codemakerRoot = path.join(paths.workspace, ".codemaker");
+  if (fs.existsSync(codemakerRoot)) {
+    result.exists[".codemaker"] = true;
+    result.codemaker = {
+      entries: sortedEntries(codemakerRoot),
+      templates: sortedEntries(path.join(codemakerRoot, "templates")),
+      hasTemplates: fs.existsSync(path.join(codemakerRoot, "templates")),
+    };
+  } else {
+    result.exists[".codemaker"] = false;
   }
   return result;
 }
@@ -367,10 +386,21 @@ function buildMcpTomlFromLegacy(legacyFile) {
   };
 }
 
+
+function resolveLegacyTreeRoot(workspace, treeName) {
+  for (const rootName of LEGACY_ROOT_CANDIDATES) {
+    const candidate = path.join(workspace, rootName, treeName);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return { rootName, root: candidate };
+    }
+  }
+  return null;
+}
+
 function buildMigrationPlan(workspace, options = {}) {
   const paths = workspacePaths(workspace);
   const filePlans = [];
-  const copied = { knowledge: [], memory: [], rules: [], skills: [] };
+  const copied = { knowledge: [], memory: [], rules: [], skills: [], templates: [] };
   const mcpScope = normalizeMcpScope(options.mcpScope);
 
   for (const name of COPY_TREE_NAMES) {
@@ -422,6 +452,24 @@ function buildMigrationPlan(workspace, options = {}) {
           targetRelative: normalizeSlashes(path.relative(paths.workspace, targetFile)),
         });
       }
+    }
+  }
+
+  const templateSource = resolveLegacyTreeRoot(paths.workspace, TEMPLATE_TREE_NAME);
+  if (templateSource) {
+    const sourceRoot = templateSource.root;
+    const targetRoot = path.join(paths.codex, TEMPLATE_TREE_NAME);
+    copied.templates = sortedEntries(sourceRoot);
+    for (const relativeFile of collectFiles(sourceRoot)) {
+      const sourceFile = path.join(sourceRoot, relativeFile.replaceAll("/", path.sep));
+      const targetFile = path.join(targetRoot, relativeFile.replaceAll("/", path.sep));
+      filePlans.push({
+        kind: TEMPLATE_TREE_NAME,
+        sourceFile,
+        sourceRelative: normalizeSlashes(path.relative(paths.workspace, sourceFile)),
+        targetFile,
+        targetRelative: normalizeSlashes(path.relative(paths.workspace, targetFile)),
+      });
     }
   }
 
@@ -566,7 +614,27 @@ function materializePlan(plan, workspace) {
     };
   }
 
-  const materialized = materializeTextPlan(plan, workspace);
+  let materialized;
+  try {
+    materialized = materializeTextPlan(plan, workspace);
+  } catch (error) {
+    if (String(error && error.message || error).startsWith("Unable to decode ")) {
+      return {
+        sourceHash,
+        renderedHash: sourceHash,
+        buffer: rawBuffer,
+        flags: {
+          rewrittenLegacyPaths: false,
+          normalizedSkillFrontmatter: false,
+          appliedSpecialFixes: [],
+        },
+        metadata: {
+          binaryTextSuffixFallback: true,
+        },
+      };
+    }
+    throw error;
+  }
   return {
     sourceHash,
     renderedHash: hashBuffer(materialized.buffer),

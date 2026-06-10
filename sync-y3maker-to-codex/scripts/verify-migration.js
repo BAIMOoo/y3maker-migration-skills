@@ -31,6 +31,14 @@ function resolveManifestTargetFile(workspace, target, entry) {
   return path.join(workspace, target.replaceAll("/", path.sep));
 }
 
+
+function hasTemplateSource(workspace) {
+  return [".y3maker", ".codemaker"].some((rootName) => {
+    const target = path.join(workspace, rootName, "templates");
+    return fs.existsSync(target) && fs.statSync(target).isDirectory();
+  });
+}
+
 function findMcpManifestEntry(manifest) {
   const files = manifest.files && typeof manifest.files === "object" ? manifest.files : {};
   return Object.entries(files).find(([, entry]) => entry.kind === "mcp-config") || null;
@@ -49,20 +57,23 @@ function verifyWorkspace(workspace, options = {}) {
     };
   }
 
-  for (const name of [...COPY_TREE_NAMES, "skills"]) {
-    const target = path.join(codex, name);
-    if (!fs.existsSync(target)) {
-      issues.push({
-        type: "missing-path",
-        path: normalizeSlashes(path.relative(workspace, target)),
-        detail: "Required migration output is missing",
-      });
-    }
-  }
-
   if (fs.existsSync(manifestFile)) {
     manifest = JSON.parse(readText(manifestFile));
     const files = manifest.files && typeof manifest.files === "object" ? manifest.files : {};
+    const requiredRoots = [...COPY_TREE_NAMES, "skills"];
+    if (hasTemplateSource(workspace) || Object.values(files).some((entry) => entry.kind === "templates")) {
+      requiredRoots.push("templates");
+    }
+    for (const name of requiredRoots) {
+      const target = path.join(codex, name);
+      if (!fs.existsSync(target)) {
+        issues.push({
+          type: "missing-path",
+          path: normalizeSlashes(path.relative(workspace, target)),
+          detail: "Required migration output is missing",
+        });
+      }
+    }
     for (const [target, entry] of Object.entries(files)) {
       if (entry.status === "blocked") {
         issues.push({
@@ -76,6 +87,23 @@ function verifyWorkspace(workspace, options = {}) {
           type: "orphaned-target",
           path: target,
           detail: entry.blockedReason || "Source file was removed from .y3maker but target is still retained",
+        });
+      }
+    }
+  }
+
+  if (!fs.existsSync(manifestFile)) {
+    const requiredRoots = [...COPY_TREE_NAMES, "skills"];
+    if (hasTemplateSource(workspace)) {
+      requiredRoots.push("templates");
+    }
+    for (const name of requiredRoots) {
+      const target = path.join(codex, name);
+      if (!fs.existsSync(target)) {
+        issues.push({
+          type: "missing-path",
+          path: normalizeSlashes(path.relative(workspace, target)),
+          detail: "Required migration output is missing",
         });
       }
     }
@@ -140,6 +168,7 @@ function verifyWorkspace(workspace, options = {}) {
     path.join(codex, "knowledge"),
     path.join(codex, "rules"),
     path.join(codex, "skills"),
+    path.join(codex, "templates"),
   ];
   const migrationSkill = path.join(codex, "skills", "sync-y3maker-to-codex");
   for (const root of activeSurfaces) {
@@ -154,7 +183,15 @@ function verifyWorkspace(workspace, options = {}) {
         return;
       }
       const relPath = normalizeSlashes(path.relative(workspace, filePath));
-      const text = readText(filePath);
+      let text;
+      try {
+        text = readText(filePath);
+      } catch (error) {
+        if (String(error && error.message || error).startsWith("Unable to decode ")) {
+          return;
+        }
+        throw error;
+      }
       if (text.includes(".codemaker")) {
         issues.push({
           type: "stale-path",
@@ -169,7 +206,8 @@ function verifyWorkspace(workspace, options = {}) {
           detail: "Contains legacy .y3maker path",
         });
       }
-      for (const candidate of extractCandidatePaths(text)) {
+      for (const rawCandidate of extractCandidatePaths(text)) {
+        const candidate = normalizeReferenceCandidate(rawCandidate);
         if (shouldSkipReference(candidate)) {
           continue;
         }
@@ -235,19 +273,38 @@ function verifyWorkspace(workspace, options = {}) {
   return { ok: issues.length === 0, issues };
 }
 
+function normalizeReferenceCandidate(candidate) {
+  return candidate
+    .replace(/\s+§.*$/, "")
+    .replace(/#.*$/, "")
+    .trim();
+}
+
 function shouldSkipReference(candidate) {
   return (
+    !candidate ||
+    candidate.includes("$") ||
     candidate.includes("{") ||
     candidate.includes("}") ||
     candidate.includes("...") ||
     candidate.includes("xxx") ||
     candidate.endsWith("AutoTestPlan.md") ||
-    candidate.endsWith("env_setup_done")
+    candidate.endsWith("env_setup_done") ||
+    candidate.endsWith("/report/") ||
+    candidate.endsWith("/report")
   );
 }
 
 function resolveReferenceTarget(workspace, filePath, candidate) {
   if (candidate.startsWith("scripts/")) {
+    const skillsRoot = path.join(workspace, ".codex", "skills");
+    const relativeToSkills = path.relative(skillsRoot, filePath);
+    if (!relativeToSkills.startsWith("..") && !path.isAbsolute(relativeToSkills)) {
+      const [skillName] = relativeToSkills.split(path.sep);
+      if (skillName) {
+        return path.join(skillsRoot, skillName, candidate.replaceAll("/", path.sep));
+      }
+    }
     return path.join(path.dirname(filePath), candidate.replaceAll("/", path.sep));
   }
   return path.join(workspace, candidate.replaceAll("/", path.sep));

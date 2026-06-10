@@ -14,6 +14,7 @@
 | `.y3maker/memory/` | `.codex/memory/` | 复制副本，作为归档 |
 | `.y3maker/rules/*.mdc` | `.codex/rules/*.mdc` | 复制副本，作为参考 |
 | `.y3maker/skills/` | `.codex/skills/` | 复制后规范化 `SKILL.md` |
+| `.y3maker/templates/` 或旧 `.codemaker/templates/` | `.codex/templates/` | 复制副本，并参与 manifest 重复同步/冲突保护 |
 | `.y3maker/mcp_settings.json` | 显式选择的项目级 `.codex/config.toml`、用户级 `~/.codex/config.toml`，或跳过 | 转换为 `[mcp_servers.*]`；没有交互选择或 `--mcp-scope project\|user\|skip` 时拒绝修改 MCP 配置 |
 | `openspec/docs` / `openspec/reports` 缺失 | 工作区目录 | 自动创建 |
 | `.codex/cmtmp` 等临时目录 | 不保留 | 迁移完成后自动清理 |
@@ -61,10 +62,10 @@
 
 `verify-migration.js` 至少确认：
 
-- `.codex/knowledge`、`.codex/memory`、`.codex/rules`、`.codex/skills` 存在
+- `.codex/knowledge`、`.codex/memory`、`.codex/rules`、`.codex/skills`、`.codex/templates` 存在
 - 每个迁移后的 skill 都有 `SKILL.md`
 - `SKILL.md` frontmatter 合法且没有 BOM
-- 迁移副本里没有残留 `.codemaker` / `.y3maker` 活跃引用
+- 迁移副本里没有残留 `.codemaker` / `.y3maker` 活跃引用；旧模板文档中的 `.codemaker/templates/...` 被改写为 `.codex/templates/...`
 - 按迁移时选择确认项目级 `.codex/config.toml`、用户级 `~/.codex/config.toml`，或显式跳过记录；用户级配置不得被隐式修改
 - manifest 中没有待人工处理的 `blocked` / `orphaned` 项被静默忽略
 - 常见路径引用失效会被列出，而不是静默跳过
