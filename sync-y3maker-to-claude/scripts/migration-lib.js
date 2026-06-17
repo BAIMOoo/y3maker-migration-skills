@@ -17,8 +17,8 @@ const TEXT_SUFFIXES = new Set([
   ".yaml",
   ".yml",
 ]);
-const COPY_TREE_NAMES = ["knowledge", "memory", "rules"];
-const CLAUDE_DIR_NAMES = ["knowledge", "memory", "rules", "skills", "migration"];
+const COPY_TREE_NAMES = ["knowledge", "memory", "rules", "templates"];
+const CLAUDE_DIR_NAMES = ["knowledge", "memory", "rules", "skills", "templates", "migration"];
 const DEFAULT_OPENSPEC_DIRS = ["openspec/docs", "openspec/reports"];
 const EXTRA_CLAUDE_TEMP_DIRS = ["cmtmp"];
 const SKILL_ITEM_EXCLUDES = {
@@ -150,7 +150,12 @@ function hashExistingFile(filePath) {
     return null;
   }
   if (TEXT_SUFFIXES.has(path.extname(filePath).toLowerCase())) {
-    return hashBuffer(Buffer.from(readText(filePath).replace(/\r\n/g, "\n"), "utf8"));
+    try {
+      return hashBuffer(Buffer.from(readText(filePath).replace(/\r\n/g, "\n"), "utf8"));
+    } catch (_err) {
+      // Binary file with a text-suffix extension — hash raw bytes
+      return hashBuffer(fs.readFileSync(filePath));
+    }
   }
   return hashBuffer(fs.readFileSync(filePath));
 }
@@ -618,7 +623,24 @@ function materializePlan(plan, workspace) {
     };
   }
 
-  const materialized = materializeTextPlan(plan, workspace);
+  let materialized;
+  try {
+    materialized = materializeTextPlan(plan, workspace);
+  } catch (_err) {
+    // Binary file with a text-suffix extension (e.g. game data .json) —
+    // copy raw bytes as-is without content-aware processing.
+    return {
+      sourceHash,
+      renderedHash: sourceHash,
+      buffer: rawBuffer,
+      flags: {
+        rewrittenLegacyPaths: false,
+        normalizedSkillFrontmatter: false,
+        appliedSpecialFixes: [],
+      },
+      metadata: {},
+    };
+  }
   return {
     sourceHash,
     renderedHash: hashBuffer(materialized.buffer),

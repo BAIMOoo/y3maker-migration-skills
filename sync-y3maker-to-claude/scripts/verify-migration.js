@@ -150,7 +150,14 @@ function verifyWorkspace(workspace, options = {}) {
         return;
       }
       const relPath = normalizeSlashes(path.relative(workspace, filePath));
-      const text = readText(filePath);
+      let text;
+      try {
+        text = readText(filePath);
+      } catch (_err) {
+        // Binary file with a text-suffix extension (e.g. game data .json) —
+        // skip text-aware checks. It can't contain legacy path references.
+        return;
+      }
       if (text.includes(".codemaker")) {
         issues.push({ type: "stale-path", path: relPath, detail: "Contains legacy .codemaker path" });
       }
@@ -228,15 +235,31 @@ function shouldSkipReference(candidate) {
   return (
     candidate.includes("{") ||
     candidate.includes("}") ||
+    candidate.includes("$") ||
+    candidate.includes("§") ||                              // section markers like "ReadMe.md §6"
     candidate.includes("...") ||
     candidate.includes("xxx") ||
+    candidate.endsWith("/") ||                              // bare directory references like "scripts/"
     candidate.endsWith("AutoTestPlan.md") ||
-    candidate.endsWith("env_setup_done")
+    candidate.endsWith("env_setup_done") ||
+    candidate.includes("/report/")                          // runtime-generated report directories
   );
 }
 
 function resolveReferenceTarget(workspace, filePath, candidate) {
   if (candidate.startsWith("scripts/")) {
+    // When inside a skill, resolve scripts/ relative to the skill root (the
+    // directory that contains SKILL.md), not the file's own subdirectory.
+    const skillsRoot = path.join(workspace, ".claude", "skills");
+    const relToSkills = path.relative(skillsRoot, filePath);
+    if (!relToSkills.startsWith("..") && !path.isAbsolute(relToSkills)) {
+      const skillName = relToSkills.split(path.sep, 1)[0];
+      const skillRoot = path.join(skillsRoot, skillName);
+      const candidateTarget = path.join(skillRoot, candidate.replaceAll("/", path.sep));
+      if (fs.existsSync(candidateTarget)) {
+        return candidateTarget;
+      }
+    }
     return path.join(path.dirname(filePath), candidate.replaceAll("/", path.sep));
   }
   return path.join(workspace, candidate.replaceAll("/", path.sep));
