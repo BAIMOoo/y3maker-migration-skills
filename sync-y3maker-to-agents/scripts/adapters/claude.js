@@ -8,66 +8,36 @@
 const fs = require("fs");
 const path = require("path");
 
-const { CANONICAL_DIR, SELF_SKILL_NAME, TEXT_SUFFIXES } = require("../lib/constants");
-const { extractFrontmatter, normalizeSkillFrontmatterText } = require("../lib/frontmatter");
-const { hashBuffer, normalizeSlashes, readText, sortedEntries } = require("../lib/fs-utils");
-const { parseLegacyMcpServers } = require("../lib/mcp-source");
-const { materializeTextPlan, rewriteClaudeSkillRelativePaths } = require("../lib/text-transforms");
+const {
+  SELF_SKILL_NAME,
+  SKILL_ITEM_EXCLUDES,
+  TEXT_SUFFIXES,
+} = require("../lib/constants");
+const {
+  extractFrontmatter,
+  extractFrontmatterField,
+  normalizeSkillFrontmatterText,
+} = require("../lib/frontmatter");
+const {
+  collectFiles,
+  hashBuffer,
+  normalizeSlashes,
+  readText,
+  sortedEntries,
+} = require("../lib/fs-utils");
+const {
+  computeJsonMcpManagedHash,
+  normalizeStringMap,
+  parseLegacyMcpServers,
+} = require("../lib/mcp-source");
+const {
+  materializeFilePlan,
+  rewriteCanonicalPaths,
+  rewriteClaudeSkillRelativePaths,
+} = require("../lib/text-transforms");
 
 const UNREWRITTEN_CLAUDE_RELATIVE_PATTERN =
   /(?:\.\.[\\/]){2,}(?:rules[\\/]|memory[\\/]|knowledge[\\/]|templates[\\/]|spec-config\.json)/;
-
-function rewriteClaudeRelativeReferences(content) {
-  return rewriteClaudeSkillRelativePaths(content).replace(
-    /(?:\.\.\\){2,}(rules\\|memory\\|knowledge\\|templates\\|spec-config\.json)/g,
-    `${CANONICAL_DIR}\\$1`
-  );
-}
-
-function materializeCanonicalFallback(canonicalPlan, workspace) {
-  const rawBuffer = fs.readFileSync(canonicalPlan.sourceFile);
-  const sourceHash = hashBuffer(rawBuffer);
-  if (!TEXT_SUFFIXES.has(path.extname(canonicalPlan.sourceFile).toLowerCase())) {
-    return {
-      sourceHash,
-      renderedHash: sourceHash,
-      buffer: rawBuffer,
-      flags: {
-        rewrittenLegacyPaths: false,
-        normalizedSkillFrontmatter: false,
-        appliedSpecialFixes: [],
-      },
-      metadata: {},
-    };
-  }
-  try {
-    const materialized = materializeTextPlan(canonicalPlan, workspace);
-    return {
-      sourceHash,
-      renderedHash: hashBuffer(materialized.buffer),
-      buffer: materialized.buffer,
-      flags: materialized.flags,
-      metadata: {},
-    };
-  } catch (error) {
-    if (String((error && error.message) || error).startsWith("Unable to decode ")) {
-      return {
-        sourceHash,
-        renderedHash: sourceHash,
-        buffer: rawBuffer,
-        flags: {
-          rewrittenLegacyPaths: false,
-          normalizedSkillFrontmatter: false,
-          appliedSpecialFixes: [],
-        },
-        metadata: {
-          binaryTextSuffixFallback: true,
-        },
-      };
-    }
-    throw error;
-  }
-}
 
 function buildSkillProjectionPlan(ctx, canonicalPlan) {
   const claudeSkillsRoot = path.join(ctx.paths.claude, "skills");
@@ -93,7 +63,7 @@ function buildSkillProjectionPlan(ctx, canonicalPlan) {
         (renderCtx &&
           renderCtx.materializedByTarget &&
           renderCtx.materializedByTarget.get(canonicalPlan.targetRelative)) ||
-        materializeCanonicalFallback(canonicalPlan, (renderCtx && renderCtx.workspace) || ctx.workspace);
+        materializeFilePlan(canonicalPlan, (renderCtx && renderCtx.workspace) || ctx.workspace);
 
       const isBinary =
         !TEXT_SUFFIXES.has(path.extname(canonicalPlan.sourceFile).toLowerCase()) ||
@@ -126,7 +96,7 @@ function buildSkillProjectionPlan(ctx, canonicalPlan) {
             : [],
       };
 
-      const relativeRewritten = rewriteClaudeRelativeReferences(content);
+      const relativeRewritten = rewriteClaudeSkillRelativePaths(content);
       if (relativeRewritten !== content) {
         content = relativeRewritten;
         flags.rewrittenLegacyPaths = true;
@@ -135,9 +105,26 @@ function buildSkillProjectionPlan(ctx, canonicalPlan) {
       if (canonicalPlan.relativeSkillFile === "SKILL.md") {
         const legacyOriginal = readText(canonicalPlan.sourceFile);
         const { frontmatter: sourceFrontmatter } = extractFrontmatter(legacyOriginal);
+        const rawAllowedTools =
+          extractFrontmatterField(sourceFrontmatter, "allowed-tools") ||
+          extractFrontmatterField(sourceFrontmatter, "tools");
+        const rewrittenSourceFrontmatter = rewriteClaudeSkillRelativePaths(
+          rewriteCanonicalPaths(sourceFrontmatter)
+        );
+        if (rawAllowedTools) {
+          const rewrittenAllowedTools =
+            extractFrontmatterField(rewrittenSourceFrontmatter, "allowed-tools") ||
+            extractFrontmatterField(rewrittenSourceFrontmatter, "tools");
+          if (
+            rewrittenAllowedTools &&
+            rewrittenAllowedTools.join("\n") !== rawAllowedTools.join("\n")
+          ) {
+            flags.rewrittenLegacyPaths = true;
+          }
+        }
         const normalized = normalizeSkillFrontmatterText(canonicalPlan.skillName, content, {
           preserveAllowedTools: true,
-          sourceFrontmatter,
+          sourceFrontmatter: rewrittenSourceFrontmatter,
         });
         if (normalized !== content) {
           content = normalized;
@@ -183,21 +170,13 @@ function normalizeClaudeMcpServer(config = {}) {
   if (Array.isArray(config.args) && config.args.length > 0) {
     normalized.args = [...config.args];
   }
-  if (
-    config.env &&
-    typeof config.env === "object" &&
-    !Array.isArray(config.env) &&
-    Object.keys(config.env).length > 0
-  ) {
-    normalized.env = { ...config.env };
+  const env = normalizeStringMap(config.env);
+  if (env) {
+    normalized.env = env;
   }
-  if (
-    config.headers &&
-    typeof config.headers === "object" &&
-    !Array.isArray(config.headers) &&
-    Object.keys(config.headers).length > 0
-  ) {
-    normalized.headers = { ...config.headers };
+  const headers = normalizeStringMap(config.headers);
+  if (headers) {
+    normalized.headers = headers;
   }
   return normalized;
 }
@@ -272,13 +251,14 @@ function buildClaudeMcpPlan(ctx) {
 
   const filePlan = {
     kind: "mcp-config",
-    isMcpConfig: true,
     sourceFile: ctx.legacyMcp.filePath,
     sourceRelative: ctx.legacyMcp.relativePath,
     targetFile,
     targetRelative,
     targetScope: ctx.mcpScope,
     mergeExisting: true,
+    managedKeys: [...ctx.legacyMcp.enabled].sort(),
+    computeManagedHash: computeJsonMcpManagedHash,
     render(plan) {
       const claudeMcp = buildClaudeMcpFromLegacy(
         plan.sourceFile,
@@ -401,6 +381,46 @@ function verifyClaudeMcpConfig(ctx) {
   return issues;
 }
 
+function collectExpectedProjectedSkills(ctx) {
+  const expected = new Set();
+  const legacySkillsRoot = path.join(ctx.paths.legacy, "skills");
+  for (const skillName of sortedEntries(legacySkillsRoot)) {
+    if (skillName === SELF_SKILL_NAME) {
+      continue;
+    }
+    const legacySkillDir = path.join(legacySkillsRoot, skillName);
+    if (!fs.statSync(legacySkillDir).isDirectory()) {
+      continue;
+    }
+    const excluded = SKILL_ITEM_EXCLUDES[skillName] || new Set();
+    const skillFiles = collectFiles(legacySkillDir, {
+      skipRelativePath(relativePath) {
+        const topLevelName = relativePath.split("/", 1)[0];
+        return excluded.has(topLevelName);
+      },
+    });
+    if (skillFiles.length > 0) {
+      expected.add(skillName);
+    }
+  }
+
+  const manifestFiles =
+    ctx.manifest && ctx.manifest.files && typeof ctx.manifest.files === "object"
+      ? ctx.manifest.files
+      : {};
+  for (const [targetPath, entry] of Object.entries(manifestFiles)) {
+    if (!entry || entry.status === "orphaned") {
+      continue;
+    }
+    const match = /^\.(?:agents|claude)\/skills\/([^/]+)\//.exec(targetPath);
+    if (match && match[1] !== SELF_SKILL_NAME) {
+      expected.add(match[1]);
+    }
+  }
+
+  return [...expected].sort();
+}
+
 module.exports = {
   id: "claude",
   aliases: [],
@@ -428,7 +448,6 @@ module.exports = {
   verifyTarget(ctx) {
     const issues = [];
     const claudeSkillsRoot = path.join(ctx.paths.claude, "skills");
-    const canonicalSkillsRoot = path.join(ctx.paths.agents, "skills");
 
     if (!fs.existsSync(claudeSkillsRoot) || !fs.statSync(claudeSkillsRoot).isDirectory()) {
       issues.push({
@@ -437,14 +456,7 @@ module.exports = {
         detail: "启用 claude 目标时缺少技能投影目录 .claude/skills",
       });
     } else {
-      for (const skillName of sortedEntries(canonicalSkillsRoot)) {
-        if (skillName === SELF_SKILL_NAME) {
-          continue;
-        }
-        const canonicalSkillDir = path.join(canonicalSkillsRoot, skillName);
-        if (!fs.statSync(canonicalSkillDir).isDirectory()) {
-          continue;
-        }
+      for (const skillName of collectExpectedProjectedSkills(ctx)) {
         const projectedSkillDir = path.join(claudeSkillsRoot, skillName);
         if (!fs.existsSync(projectedSkillDir) || !fs.statSync(projectedSkillDir).isDirectory()) {
           issues.push({

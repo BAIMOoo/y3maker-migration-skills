@@ -1,7 +1,7 @@
 interface:
-  display_name: "Y3Maker 迁移"
-  short_description: "迁移并同步遗留 .y3maker 或 .codemaker 项目助手内容到 .codex/.omx。"
-  default_prompt: "使用 $sync-y3maker-to-codex 迁移这个工作区里的遗留 .y3maker 内容，并检查是否需要把新变更同步到现有 .codex 副本。"
+  display_name: "[已废弃] Y3Maker 迁移（Codex 旧版）"
+  short_description: "[已废弃，请改用 sync-y3maker-to-agents] 旧版单宿主 Codex 迁移技能，仅保留兼容；新迁移与同步请改用 sync-y3maker-to-agents。"
+  default_prompt: "使用 $sync-y3maker-to-codex 迁移这个工作区里的遗留 .y3maker 内容，并检查是否需要把新变更同步到现有 .codex 副本（注意：本技能已废弃，推荐改用 $sync-y3maker-to-agents）。"
 
 policy:
   allow_implicit_invocation: true

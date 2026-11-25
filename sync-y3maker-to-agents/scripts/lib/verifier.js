@@ -21,6 +21,7 @@ const {
   assertSafeWorkspace,
   getUserHome,
   hashExistingFile,
+  isDecodeError,
   isSameOrInsidePath,
   normalizeSlashes,
   readText,
@@ -206,7 +207,7 @@ function scanActiveTextSurfaces(workspace, surfaceRoots, options = {}) {
       try {
         text = readText(filePath);
       } catch (error) {
-        if (String((error && error.message) || error).startsWith("Unable to decode ")) {
+        if (isDecodeError(error)) {
           return;
         }
         throw error;

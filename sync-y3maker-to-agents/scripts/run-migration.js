@@ -5,63 +5,14 @@ const path = require("path");
 const readline = require("readline");
 
 const { getAdapters, normalizeTargets } = require("./adapters");
-const { MCP_SCOPES } = require("./lib/constants");
+const { emitJson, parseCommonCliOptions } = require("./lib/cli-args");
 const { assertSafeWorkspace, getUserHome } = require("./lib/fs-utils");
 const { loadManifest } = require("./lib/manifest");
 const { applyMigration, inventoryWorkspace } = require("./lib/migration-engine");
 
-function emitJson(payload, pretty) {
-  const text = JSON.stringify(payload, null, pretty ? 2 : 0);
-  process.stdout.write(`${text}\n`);
-}
-
-function requireNextValue(tokens, index, flagName) {
-  const value = tokens[index + 1];
-  if (value === undefined) {
-    throw new Error(`参数 ${flagName} 缺少取值`);
-  }
-  return value;
-}
-
 function parseArgs(argv) {
   const [command, ...rest] = argv;
-  const options = {
-    workspace: ".",
-    dryRun: false,
-    pretty: false,
-    allowUnsafeWorkspace: false,
-    targets: null,
-    mcpScope: null,
-  };
-
-  for (let index = 0; index < rest.length; index += 1) {
-    const token = rest[index];
-    if (token === "--workspace") {
-      options.workspace = requireNextValue(rest, index, "--workspace");
-      index += 1;
-    } else if (token === "--dry-run") {
-      options.dryRun = true;
-    } else if (token === "--pretty") {
-      options.pretty = true;
-    } else if (token === "--allow-unsafe-workspace") {
-      options.allowUnsafeWorkspace = true;
-    } else if (token === "--targets") {
-      options.targets = requireNextValue(rest, index, "--targets");
-      index += 1;
-    } else if (token === "--mcp-scope") {
-      options.mcpScope = requireNextValue(rest, index, "--mcp-scope");
-      index += 1;
-    } else {
-      throw new Error(`未知参数：${token}`);
-    }
-  }
-
-  if (options.mcpScope !== null && !MCP_SCOPES.has(options.mcpScope)) {
-    throw new Error(`无效的 --mcp-scope：${options.mcpScope}。可选值：project、user 或 skip。`);
-  }
-  if (options.targets !== null) {
-    options.targets = normalizeTargets(options.targets);
-  }
+  const options = parseCommonCliOptions(rest, { allowDryRun: true });
 
   if (!command || !["inventory", "apply"].includes(command)) {
     throw new Error(

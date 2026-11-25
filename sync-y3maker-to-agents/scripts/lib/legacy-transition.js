@@ -68,23 +68,55 @@ function isLocallyModified(entry, currentHash) {
   return false;
 }
 
-function resolveActiveTargets(workspace, options = {}) {
-  if (Array.isArray(options.targets)) {
-    return new Set(options.targets.map((target) => String(target).toLowerCase()));
+function loadCanonicalManifestSafe(workspace, options = {}) {
+  if (options.canonicalManifest && typeof options.canonicalManifest === "object") {
+    return options.canonicalManifest;
   }
   const canonicalManifest = path.join(workspace, MANIFEST_RELATIVE_PATH.replaceAll("/", path.sep));
   if (!fs.existsSync(canonicalManifest) || !fs.statSync(canonicalManifest).isFile()) {
-    return new Set();
+    return { targets: [], files: {} };
   }
   try {
     const parsed = JSON.parse(readText(canonicalManifest));
-    if (Array.isArray(parsed.targets)) {
-      return new Set(parsed.targets.map((target) => String(target).toLowerCase()));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return {
+        targets: Array.isArray(parsed.targets) ? parsed.targets : [],
+        files: parsed.files && typeof parsed.files === "object" && !Array.isArray(parsed.files)
+          ? parsed.files
+          : {},
+      };
     }
   } catch (_error) {
-    return new Set();
+    return { targets: [], files: {} };
+  }
+  return { targets: [], files: {} };
+}
+
+function resolveActiveTargets(canonicalManifest, options = {}) {
+  if (Array.isArray(options.targets)) {
+    return new Set(options.targets.map((target) => String(target).toLowerCase()));
+  }
+  if (canonicalManifest && Array.isArray(canonicalManifest.targets)) {
+    return new Set(canonicalManifest.targets.map((target) => String(target).toLowerCase()));
   }
   return new Set();
+}
+
+function isActivelyManagedSurface(
+  targetPath,
+  subdir,
+  canonicalFiles,
+  activeProtectedDirectoriesSet,
+  activeProtectedPathsSet
+) {
+  const isProtectedSurface =
+    activeProtectedPathsSet.has(targetPath) ||
+    (Boolean(subdir) && activeProtectedDirectoriesSet.has(subdir));
+  if (!isProtectedSurface) {
+    return false;
+  }
+  const canonicalEntry = canonicalFiles && canonicalFiles[targetPath];
+  return Boolean(canonicalEntry && canonicalEntry.status === "managed");
 }
 
 function isUserScopedEntry(targetPath, entry) {
@@ -219,6 +251,7 @@ function appendActiveProtectionGuidance(
 function inspectSingleLegacyMigration(workspace, spec, context) {
   const manifestFile = path.join(workspace, spec.manifestPath.replaceAll("/", path.sep));
   const activeTargets = context.activeTargets;
+  const canonicalFiles = context.canonicalFiles || {};
   const homeDir = context.homeDir;
   const presentDirectories = collectPresentDirectories(workspace, spec.rootDir);
   const manifestResult = parseLegacyManifest(manifestFile);
@@ -373,6 +406,17 @@ function inspectSingleLegacyMigration(workspace, spec, context) {
     }
 
     const subdir = resolveLegacySubdir(spec.rootDir, targetPath);
+    if (
+      isActivelyManagedSurface(
+        targetPath,
+        subdir,
+        canonicalFiles,
+        activeProtectedDirectoriesSet,
+        activeProtectedPathsSet
+      )
+    ) {
+      continue;
+    }
     if (entry.status === "orphaned") {
       const locallyModified = isLocallyModified(entry, currentHash);
       const reason = locallyModified
@@ -491,7 +535,9 @@ function inspectSingleLegacyMigration(workspace, spec, context) {
 
   const activeProtectedDirectories = [...activeProtectedDirectoriesSet].sort();
   const activeProtectedPaths = [...activeProtectedPathsSet].sort();
-  const reviewRequiredDirectories = [...reviewDirs].sort();
+  const reviewRequiredDirectories = [...reviewDirs]
+    .filter((dirRel) => !activeProtectedDirectoriesSet.has(dirRel))
+    .sort();
   const safeToCleanDirectories = [];
   for (const dirRel of presentDirectories) {
     if (activeProtectedDirectoriesSet.has(dirRel)) {
@@ -593,7 +639,12 @@ function inspectSingleLegacyMigration(workspace, spec, context) {
 function detectLegacyTransitions(workspace, options = {}) {
   const root = path.resolve(workspace);
   const homeDir = getUserHome(options.homeDir);
-  const activeTargets = resolveActiveTargets(root, options);
+  const canonicalManifest = loadCanonicalManifestSafe(root, options);
+  const activeTargets = resolveActiveTargets(canonicalManifest, options);
+  const canonicalFiles =
+    canonicalManifest && canonicalManifest.files && typeof canonicalManifest.files === "object"
+      ? canonicalManifest.files
+      : {};
   const legacyMigrations = [];
 
   for (const spec of LEGACY_MANIFEST_SPECS) {
@@ -601,7 +652,9 @@ function detectLegacyTransitions(workspace, options = {}) {
     if (!fs.existsSync(manifestFile) || !fs.statSync(manifestFile).isFile()) {
       continue;
     }
-    legacyMigrations.push(inspectSingleLegacyMigration(root, spec, { activeTargets, homeDir }));
+    legacyMigrations.push(
+      inspectSingleLegacyMigration(root, spec, { activeTargets, canonicalFiles, homeDir })
+    );
   }
 
   if (legacyMigrations.length === 0) {

@@ -3,6 +3,7 @@ const path = require("path");
 
 const { getAdapters, normalizeTargets } = require("../adapters");
 const {
+  CANONICAL_DIR,
   CANONICAL_DIR_NAMES,
   COPY_TREE_NAMES,
   DEFAULT_OPENSPEC_DIRS,
@@ -13,7 +14,6 @@ const {
   MCP_SCOPES,
   SKILL_ITEM_EXCLUDES,
   TEMPLATE_TREE_NAME,
-  TEXT_SUFFIXES,
   TOOL_NAME,
 } = require("./constants");
 const {
@@ -24,6 +24,7 @@ const {
   hashBuffer,
   hashExistingFile,
   normalizeSlashes,
+  readText,
   sortedEntries,
   workspacePaths,
   writeBuffer,
@@ -39,7 +40,7 @@ const {
   writeManifest,
 } = require("./manifest");
 const { inspectLegacyMcp } = require("./mcp-source");
-const { materializeTextPlan } = require("./text-transforms");
+const { materializeFilePlan } = require("./text-transforms");
 
 function normalizeMcpScope(mcpScope) {
   if (!mcpScope) {
@@ -72,6 +73,17 @@ function appendUnique(list, items) {
   }
 }
 
+function hasUpstreamSource(workspace, previous, seenTargets) {
+  if (!previous || typeof previous.source !== "string" || !previous.source) {
+    return false;
+  }
+  if (previous.source.startsWith(`${CANONICAL_DIR}/`)) {
+    return seenTargets.has(previous.source);
+  }
+  const sourceFile = path.join(workspace, previous.source.replaceAll("/", path.sep));
+  return fs.existsSync(sourceFile) && fs.statSync(sourceFile).isFile();
+}
+
 function inventoryWorkspace(workspace, options = {}) {
   const paths = workspacePaths(workspace);
   const homeDir = getUserHome(options.homeDir);
@@ -82,6 +94,7 @@ function inventoryWorkspace(workspace, options = {}) {
   const legacyTransition = detectLegacyTransitions(paths.workspace, {
     homeDir,
     targets: manifest.targets || [],
+    canonicalManifest: manifest,
   });
 
   const result = {
@@ -331,51 +344,7 @@ function materializePlan(plan, ctx) {
     };
   }
 
-  const rawBuffer = fs.readFileSync(plan.sourceFile);
-  const sourceHash = hashBuffer(rawBuffer);
-  if (!TEXT_SUFFIXES.has(path.extname(plan.sourceFile).toLowerCase())) {
-    return {
-      sourceHash,
-      renderedHash: sourceHash,
-      buffer: rawBuffer,
-      flags: {
-        rewrittenLegacyPaths: false,
-        normalizedSkillFrontmatter: false,
-        appliedSpecialFixes: [],
-      },
-      metadata: {},
-    };
-  }
-
-  let materialized;
-  try {
-    materialized = materializeTextPlan(plan, ctx.workspace);
-  } catch (error) {
-    if (String((error && error.message) || error).startsWith("Unable to decode ")) {
-      return {
-        sourceHash,
-        renderedHash: sourceHash,
-        buffer: rawBuffer,
-        flags: {
-          rewrittenLegacyPaths: false,
-          normalizedSkillFrontmatter: false,
-          appliedSpecialFixes: [],
-        },
-        metadata: {
-          binaryTextSuffixFallback: true,
-        },
-      };
-    }
-    throw error;
-  }
-
-  return {
-    sourceHash,
-    renderedHash: hashBuffer(materialized.buffer),
-    buffer: materialized.buffer,
-    flags: materialized.flags,
-    metadata: {},
-  };
+  return materializeFilePlan(plan, ctx.workspace);
 }
 
 function ensureProjectDefaults(workspace, dryRun) {
@@ -550,9 +519,41 @@ function applyMigration(workspace, options = {}) {
     materializeCtx.materializedByTarget.set(plan.targetRelative, materialized);
     const currentTargetHash = hashExistingFile(plan.targetFile);
     const previous = previousFiles[plan.targetRelative] || null;
+
+    let currentManagedHash = null;
+    if (
+      plan.mergeExisting &&
+      typeof plan.computeManagedHash === "function" &&
+      previous &&
+      previous.managedHash &&
+      Array.isArray(previous.managedKeys) &&
+      currentTargetHash !== null
+    ) {
+      try {
+        currentManagedHash = plan.computeManagedHash(readText(plan.targetFile), previous.managedKeys);
+      } catch (_error) {
+        currentManagedHash = null;
+      }
+    }
+
     const decision = decidePlanAction(previous, materialized.renderedHash, currentTargetHash, {
       mergeExisting: Boolean(plan.mergeExisting),
+      sourceHash: materialized.sourceHash,
+      currentManagedHash,
     });
+
+    const renderedManagedMeta =
+      plan.mergeExisting &&
+      typeof plan.computeManagedHash === "function" &&
+      Array.isArray(plan.managedKeys)
+        ? {
+            managedKeys: plan.managedKeys,
+            managedHash: plan.computeManagedHash(
+              materialized.buffer.toString("utf8"),
+              plan.managedKeys
+            ),
+          }
+        : {};
 
     if (
       materialized.flags.rewrittenLegacyPaths ||
@@ -563,7 +564,7 @@ function applyMigration(workspace, options = {}) {
     if (materialized.flags.normalizedSkillFrontmatter) {
       normalizedSkills.push(plan.targetRelative);
     }
-    if (plan.adapterId && (plan.isMcpConfig || plan.kind === "mcp-config")) {
+    if (plan.adapterId && plan.kind === "mcp-config") {
       updateAdapterMcpState(mcp, plan.adapterId, plan, materialized, decision);
     }
 
@@ -572,7 +573,8 @@ function applyMigration(workspace, options = {}) {
       nextFiles[plan.targetRelative] = managedManifestRecord(
         plan,
         materialized,
-        materialized.renderedHash
+        materialized.renderedHash,
+        renderedManagedMeta
       );
       if (decision.action === "create") {
         sync.created.push(plan.targetRelative);
@@ -586,7 +588,8 @@ function applyMigration(workspace, options = {}) {
       nextFiles[plan.targetRelative] = managedManifestRecord(
         plan,
         materialized,
-        materialized.renderedHash
+        materialized.renderedHash,
+        renderedManagedMeta
       );
       if (decision.action === "adopt") {
         sync.adopted.push(plan.targetRelative);
@@ -597,11 +600,16 @@ function applyMigration(workspace, options = {}) {
     }
 
     if (decision.action === "blocked") {
+      const blockedManagedMeta =
+        previous && previous.managedHash && Array.isArray(previous.managedKeys)
+          ? { managedKeys: previous.managedKeys, managedHash: previous.managedHash }
+          : renderedManagedMeta;
       nextFiles[plan.targetRelative] = blockedManifestRecord(
         plan,
         materialized,
         currentTargetHash,
-        decision.reason
+        decision.reason,
+        blockedManagedMeta
       );
       sync.blocked.push({ path: plan.targetRelative, reason: decision.reason });
       continue;
@@ -610,10 +618,15 @@ function applyMigration(workspace, options = {}) {
     nextFiles[plan.targetRelative] = managedManifestRecord(
       plan,
       materialized,
-      currentTargetHash
+      currentTargetHash,
+      renderedManagedMeta
     );
     sync.unchangedCount += 1;
   }
+
+  const activeTargetSet = new Set(targets);
+  const hints = [];
+  const deselectedByAdapter = new Map();
 
   for (const [targetRelative, previous] of Object.entries(previousFiles)) {
     if (seenTargets.has(targetRelative)) {
@@ -624,6 +637,17 @@ function applyMigration(workspace, options = {}) {
     });
     const currentTargetHash = hashExistingFile(targetFile);
     if (currentTargetHash === null) {
+      continue;
+    }
+    if (
+      previous.adapterId &&
+      !activeTargetSet.has(previous.adapterId) &&
+      hasUpstreamSource(paths.workspace, previous, seenTargets)
+    ) {
+      if (!deselectedByAdapter.has(previous.adapterId)) {
+        deselectedByAdapter.set(previous.adapterId, []);
+      }
+      deselectedByAdapter.get(previous.adapterId).push(targetRelative);
       continue;
     }
     const previousScope =
@@ -648,6 +672,12 @@ function applyMigration(workspace, options = {}) {
     });
   }
 
+  for (const adapterId of [...deselectedByAdapter.keys()].sort()) {
+    const retainedPaths = deselectedByAdapter.get(adapterId).sort();
+    const deselectedHint = `已取消启用宿主 ${adapterId}，以下由该宿主生成的历史文件已保留未删除，请按需人工核对或清理：${retainedPaths.join("、")}`;
+    appendUnique(hints, [deselectedHint]);
+  }
+
   const nextManifest = {
     version: MANIFEST_VERSION,
     tool: TOOL_NAME,
@@ -665,6 +695,7 @@ function applyMigration(workspace, options = {}) {
     createdDirs,
     copied,
     sync,
+    hints,
     rewrittenFiles: [...new Set(rewrittenFiles)].sort(),
     normalizedSkills: [...new Set(normalizedSkills)].sort(),
     mcp,
@@ -676,7 +707,11 @@ function applyMigration(workspace, options = {}) {
     },
     projectDefaults: ensureProjectDefaults(paths.workspace, dryRun),
     removedTempDirs: removeExtraneousAgentsTempDirs(paths.workspace, dryRun),
-    legacyTransition: detectLegacyTransitions(paths.workspace, { homeDir, targets }),
+    legacyTransition: detectLegacyTransitions(paths.workspace, {
+      homeDir,
+      targets,
+      ...(dryRun ? {} : { canonicalManifest: nextManifest }),
+    }),
   };
 }
 
