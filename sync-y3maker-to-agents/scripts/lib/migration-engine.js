@@ -79,7 +79,10 @@ function inventoryWorkspace(workspace, options = {}) {
   const manifestEntries = Object.values(manifest.files || {});
   const legacyMcpPath = path.join(paths.legacy, "mcp_settings.json");
   const legacyMcp = inspectLegacyMcp(legacyMcpPath);
-  const legacyTransition = detectLegacyTransitions(paths.workspace, { homeDir });
+  const legacyTransition = detectLegacyTransitions(paths.workspace, {
+    homeDir,
+    targets: manifest.targets || [],
+  });
 
   const result = {
     workspace: paths.workspace,
@@ -658,7 +661,7 @@ function applyMigration(workspace, options = {}) {
     },
     projectDefaults: ensureProjectDefaults(paths.workspace, dryRun),
     removedTempDirs: removeExtraneousAgentsTempDirs(paths.workspace, dryRun),
-    legacyTransition: detectLegacyTransitions(paths.workspace, { homeDir }),
+    legacyTransition: detectLegacyTransitions(paths.workspace, { homeDir, targets }),
   };
 }
 
