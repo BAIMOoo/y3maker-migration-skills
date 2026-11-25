@@ -1000,4 +1000,133 @@ describe("Claude Code 适配层（Skill Projection 与 Claude MCP 安全合并�
       fixture.cleanup();
     }
   });
+
+  it("Slice 7: .agents/skills/ 下存在非 .y3maker 来源的用户自定义技能时，apply --targets claude 后 verify 不应误报缺少投影，而缺失真源技能投影仍拦截", () => {
+    const fixture = createFixture();
+    try {
+      seedMinimalY3Maker(fixture);
+
+      // 直接在 .agents/skills/ 下安装一个非 .y3maker 来源的本地自定义技能
+      fixture.writeWorkspaceFile(
+        ".agents/skills/custom-local/SKILL.md",
+        "---\nname: custom-local\ndescription: 直接安装于 .agents/skills/ 的本地自定义技能\n---\n\n本地技能说明。\n"
+      );
+
+      const applyRes = fixture.runApply(["--targets", "claude"]);
+      assert.equal(applyRes.status, 0, `apply stderr: ${applyRes.stderr}`);
+      assert.equal(fixture.existsInWorkspace(".claude/skills/y3-sample/SKILL.md"), true);
+      assert.equal(fixture.existsInWorkspace(".claude/skills/custom-local"), false);
+
+      // verify 应与 apply 对称：不因非 .y3maker 来源的 custom-local 失败
+      const verifyOk = fixture.runVerify(["--pretty"]);
+      assert.equal(
+        verifyOk.status,
+        0,
+        `非 .y3maker 来源的 .agents/skills/custom-local 不应令 verify 失败，实际：${verifyOk.stdout}`
+      );
+      assert.equal(verifyOk.json.ok, true);
+      assert.deepEqual(verifyOk.json.issues, []);
+
+      // 但如果删除了来自 .y3maker 的 y3-sample 投影目录，verify 仍必须拦截 missing-skill
+      fixture.removeWorkspacePath(".claude/skills/y3-sample");
+      const verifyMissing = fixture.runVerify(["--pretty"]);
+      assert.equal(verifyMissing.status, 1);
+      assert.ok(
+        verifyMissing.json.issues.some(
+          (i) => i.type === "missing-skill" && i.path === ".claude/skills/y3-sample/SKILL.md"
+        ),
+        `缺失 .y3maker 技能投影时仍应报 missing-skill，实际：${JSON.stringify(verifyMissing.json.issues)}`
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("Slice 8: Claude 投影改写 allowed-tools/tools 中的旧路径并统一改写混合斜杠跨目录相对引用，最终 verify 全部通过", () => {
+    const fixture = createFixture();
+    try {
+      seedMinimalY3Maker(fixture, { withTemplates: "y3maker" });
+      fixture.writeWorkspaceFile(
+        ".y3maker/skills/y3-sample/SKILL.md",
+        [
+          "---",
+          "name: y3-sample",
+          "description: 路径与工具规范测试",
+          "allowed-tools: Bash(python .codemaker/skills/y3-sample/scripts/run.py:*), Read(.y3maker/rules/*), Edit(.codex/memory/*)",
+          "---",
+          "",
+          "# 混合斜杠引用",
+          "",
+          "- 规则：`../../rules\\api-safety.mdc`",
+          "- 记忆：`..\\../memory/facts.md`",
+          "- 知识：`..\\..\\knowledge/overview.md`",
+          "- 模板：`../../..\\templates\\doc.md`",
+          "- 配置：`..\\../..\\spec-config.json`",
+          "",
+        ].join("\n")
+      );
+      fixture.writeWorkspaceFile(
+        ".y3maker/skills/y3-tools-list/SKILL.md",
+        [
+          "---",
+          "name: y3-tools-list",
+          "description: 多行 tools 路径改写测试",
+          "tools:",
+          "  - Bash(python <agent>/skills/y3-sample/scripts/run.py:*)",
+          "  - Read(<codemaker>/rules/api-safety.mdc)",
+          "  - Read(../../rules\\api-safety.mdc)",
+          "---",
+          "",
+          "正文。",
+          "",
+        ].join("\n")
+      );
+
+      const applyRes = fixture.runApply(["--targets", "claude", "--pretty"]);
+      assert.equal(applyRes.status, 0, `apply stderr: ${applyRes.stderr}`);
+
+      const claudeSample = fixture.readWorkspaceFile(".claude/skills/y3-sample/SKILL.md");
+      assert.ok(
+        claudeSample.includes(
+          "allowed-tools: Bash(python .agents/skills/y3-sample/scripts/run.py:*), Read(.agents/rules/*), Edit(.agents/memory/*)"
+        ),
+        `allowed-tools 中的旧路径应统一改写为 .agents/，实际：\n${claudeSample}`
+      );
+      assert.ok(claudeSample.includes("`.agents/rules/api-safety.mdc`"), `应改写 ../../rules\\，实际：\n${claudeSample}`);
+      assert.ok(claudeSample.includes("`.agents/memory/facts.md`"), `应改写 ..\\../memory/，实际：\n${claudeSample}`);
+      assert.ok(claudeSample.includes("`.agents/knowledge/overview.md`"), `应改写 ..\\..\\knowledge/，实际：\n${claudeSample}`);
+      assert.ok(claudeSample.includes("`.agents/templates/doc.md`"), `应改写 ../../..\\templates\\，实际：\n${claudeSample}`);
+      assert.ok(claudeSample.includes("`.agents/spec-config.json`"), `应改写 ..\\../..\\spec-config.json，实际：\n${claudeSample}`);
+      assert.equal(claudeSample.includes(".codemaker"), false);
+      assert.equal(claudeSample.includes(".y3maker/"), false);
+      assert.equal(claudeSample.includes(".codex"), false);
+
+      const claudeList = fixture.readWorkspaceFile(".claude/skills/y3-tools-list/SKILL.md");
+      assert.ok(
+        claudeList.includes("  - Bash(python .agents/skills/y3-sample/scripts/run.py:*)"),
+        `多行 tools 中的 <agent>/ 应改写为 .agents/，实际：\n${claudeList}`
+      );
+      assert.ok(
+        claudeList.includes("  - Read(.agents/rules/api-safety.mdc)"),
+        `多行 tools 中的 <codemaker>/ 与混合相对路径应改写为 .agents/，实际：\n${claudeList}`
+      );
+      assert.equal(claudeList.includes("<agent>/"), false);
+      assert.equal(claudeList.includes("<codemaker>/"), false);
+      assert.equal(claudeList.includes("../../rules"), false);
+
+      // 写入 spec-config.json 使悬空引用检查覆盖该路径
+      fixture.writeWorkspaceFile(".agents/spec-config.json", "{}\n");
+
+      const verifyRes = fixture.runVerify(["--pretty"]);
+      assert.equal(
+        verifyRes.status,
+        0,
+        `改写后 verify 应全部通过，实际：${verifyRes.stdout}`
+      );
+      assert.equal(verifyRes.json.ok, true);
+      assert.deepEqual(verifyRes.json.issues, []);
+    } finally {
+      fixture.cleanup();
+    }
+  });
 });

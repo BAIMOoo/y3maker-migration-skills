@@ -207,7 +207,7 @@ describe("旧版 .codex/ 与 .claude/ 迁移副本过渡盘点检测（Ticket #7
     }
   });
 
-  it("Slice 3a: 妥善分类 orphaned（未改/已改）、missing 与旧目录内未受管 untracked 本地文件", () => {
+  it("Slice 3a: 妥善分类 orphaned（未改/已改）、missing 与旧版迁移目录内未受管 untracked 本地文件", () => {
     const fixture = createFixture();
     try {
       seedMinimalY3Maker(fixture);
@@ -987,6 +987,161 @@ describe("旧版 .codex/ 与 .claude/ 迁移副本过渡盘点检测（Ticket #7
       assert.deepEqual(fixture.snapshotTree(".codex"), codexBefore);
       assert.deepEqual(fixture.snapshotTree(".claude"), claudeBefore);
       assert.deepEqual(fixture.snapshotTree(".y3maker"), y3makerBefore);
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("Slice 8: 含旧版 .codex/ 与 .claude/ 项目级 MCP 清单时，apply --targets all --mcp-scope project 不会将合并后的 .codex/config.toml、.mcp.json 或活跃 .claude/skills 误报为手工改动或 reviewRequiredDirectories", () => {
+    const fixture = createFixture();
+    try {
+      seedMinimalY3Maker(fixture, {
+        withTemplates: "y3maker",
+        mcpSettings: {
+          mcpServers: {
+            "y3-http": {
+              type: "streamableHttp",
+              url: "https://mcp.example.com/mcp",
+              headers: {
+                Authorization: "Bearer legacy-token",
+              },
+            },
+            "y3-stdio": {
+              command: "node",
+              args: ["scripts/server.js"],
+              env: { NODE_ENV: "production" },
+            },
+          },
+        },
+      });
+
+      // 1) 运行真实旧版 sync-y3maker-to-codex 与 sync-y3maker-to-claude（均启用 project MCP）
+      const legacyCodexRun = fixture.runCli(LEGACY_CODEX_SCRIPT, [
+        "apply",
+        "--workspace",
+        fixture.workspace,
+        "--mcp-scope",
+        "project",
+      ]);
+      assert.equal(legacyCodexRun.status, 0, `旧版 codex 迁移失败: ${legacyCodexRun.stderr}`);
+
+      const legacyClaudeRun = fixture.runCli(LEGACY_CLAUDE_SCRIPT, [
+        "apply",
+        "--workspace",
+        fixture.workspace,
+        "--mcp-scope",
+        "project",
+      ]);
+      assert.equal(legacyClaudeRun.status, 0, `旧版 claude 迁移失败: ${legacyClaudeRun.stderr}`);
+
+      // 在旧 .y3maker/mcp_settings.json 新增一个服务，使新版 apply 必然改写合并 .codex/config.toml 与 .mcp.json
+      fixture.writeWorkspaceFile(
+        ".y3maker/mcp_settings.json",
+        `${JSON.stringify(
+          {
+            mcpServers: {
+              "y3-http": {
+                type: "streamableHttp",
+                url: "https://mcp.example.com/mcp",
+                headers: {
+                  Authorization: "Bearer updated-token",
+                },
+              },
+              "y3-stdio": {
+                command: "node",
+                args: ["scripts/server-v2.js"],
+                env: { NODE_ENV: "production" },
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+
+      // 2) 运行新版 apply --targets all --mcp-scope project
+      const applyAll = fixture.runApply([
+        "--targets",
+        "all",
+        "--mcp-scope",
+        "project",
+        "--pretty",
+      ]);
+      assert.equal(applyAll.status, 0, `apply --targets all stderr: ${applyAll.stderr}`);
+
+      // 紧接着再跑一次 inventory，两者都不应把 apply 合并过的 MCP 文件误报为旧版手工改动
+      const postInv = fixture.runInventory(["--pretty"]);
+      assert.equal(postInv.status, 0, `inventory stderr: ${postInv.stderr}`);
+
+      for (const [label, report] of [
+        ["apply", applyAll.json.legacyTransition],
+        ["post-inventory", postInv.json.legacyTransition],
+      ]) {
+        const codex = report.legacyMigrations.find((item) => item.harness === "codex");
+        const claude = report.legacyMigrations.find((item) => item.harness === "claude");
+
+        assert.deepEqual(
+          codex.files.modified,
+          [],
+          `${label}: apply 合并后的 .codex/config.toml 不应误报为旧版手工改动，实际：${JSON.stringify(codex.files.modified)}`
+        );
+        assert.deepEqual(
+          codex.manualReviewRequired,
+          [],
+          `${label}: .codex 不应因活跃 .codex/config.toml 阻断清理`
+        );
+        assert.ok(
+          codex.safeToCleanDirectories.includes(".codex/migration"),
+          `${label}: 无旧版手工改动时 .codex/migration 应可评估清理，实际：${JSON.stringify(codex.safeToCleanDirectories)}`
+        );
+        assert.ok(codex.activeProtectedPaths.includes(".codex/config.toml"));
+
+        assert.deepEqual(
+          claude.files.modified,
+          [],
+          `${label}: apply 合并后的 .mcp.json 不应误报为旧版手工改动，实际：${JSON.stringify(claude.files.modified)}`
+        );
+        assert.deepEqual(
+          claude.manualReviewRequired,
+          [],
+          `${label}: .claude 不应因活跃 .mcp.json 阻断清理`
+        );
+        assert.equal(
+          claude.reviewRequiredDirectories.includes(".claude/skills"),
+          false,
+          `${label}: 活跃保护目录 .claude/skills 不得出现在 reviewRequiredDirectories`
+        );
+        assert.ok(
+          claude.safeToCleanDirectories.includes(".claude/migration"),
+          `${label}: 无旧版手工改动时 .claude/migration 应可评估清理，实际：${JSON.stringify(claude.safeToCleanDirectories)}`
+        );
+        assert.deepEqual(claude.activeProtectedDirectories, [".claude/skills"]);
+        assert.ok(claude.activeProtectedPaths.includes(".mcp.json"));
+      }
+
+      // 3) 若用户在旧版 .claude/skills/y3-sample/SKILL.md 中存在手工改动（apply 将其保护为 blocked），
+      //    仍应保证 .claude/skills 归入 activeProtectedDirectories 而非 reviewRequiredDirectories
+      fixture.writeWorkspaceFile(
+        ".claude/skills/y3-sample/SKILL.md",
+        "---\nname: y3-sample\ndescription: 本地手工改过的技能\n---\n\n人工内容。\n"
+      );
+      const applyWithSkillEdit = fixture.runApply([
+        "--targets",
+        "all",
+        "--mcp-scope",
+        "project",
+        "--pretty",
+      ]);
+      assert.equal(applyWithSkillEdit.status, 0, `apply stderr: ${applyWithSkillEdit.stderr}`);
+      const claudeWithSkillEdit = applyWithSkillEdit.json.legacyTransition.legacyMigrations.find(
+        (item) => item.harness === "claude"
+      );
+      assert.deepEqual(claudeWithSkillEdit.activeProtectedDirectories, [".claude/skills"]);
+      assert.equal(
+        claudeWithSkillEdit.reviewRequiredDirectories.includes(".claude/skills"),
+        false,
+        "即使 .claude/skills 内文件存在手工改动，活跃目录 .claude/skills 也不得出现在 reviewRequiredDirectories 中"
+      );
     } finally {
       fixture.cleanup();
     }

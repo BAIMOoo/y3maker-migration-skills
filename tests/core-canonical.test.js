@@ -230,7 +230,7 @@ describe("sync-y3maker-to-agents 核心迁移（Canonical Store 与 CLI 契约�
     const fixture = createFixture();
     try {
       seedMinimalY3Maker(fixture, { withTemplates: "y3maker" });
-      fixture.writeWorkspaceFile(".codemaker/templates/old-only.md", "旧目录模板\n");
+      fixture.writeWorkspaceFile(".codemaker/templates/old-only.md", "旧版 .codemaker 模板\n");
 
       const res = fixture.runApply(["--targets", "dsh"]);
       assert.equal(res.status, 0, `stderr: ${res.stderr}`);

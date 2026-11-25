@@ -58,6 +58,8 @@ function resolveManifestTargetFile(workspace, targetRelative, previous = {}, opt
 
 function decidePlanAction(previous, renderedHash, currentTargetHash, options = {}) {
   const mergeExisting = Boolean(options.mergeExisting);
+  const currentManagedHash =
+    options.currentManagedHash !== undefined ? options.currentManagedHash : null;
 
   if (currentTargetHash === renderedHash) {
     if (!previous) {
@@ -92,8 +94,15 @@ function decidePlanAction(previous, renderedHash, currentTargetHash, options = {
     };
   }
 
-  const sourceChanged = previous.renderedHash !== renderedHash;
-  const targetChanged = previous.targetHash !== currentTargetHash;
+  const useManagedHash =
+    mergeExisting && Boolean(previous.managedHash) && currentManagedHash !== null;
+  const sourceChanged = useManagedHash
+    ? (options.sourceHash !== undefined && previous.sourceHash !== options.sourceHash) ||
+      previous.renderedHash !== renderedHash
+    : previous.renderedHash !== renderedHash;
+  const targetChanged = useManagedHash
+    ? previous.managedHash !== currentManagedHash
+    : previous.targetHash !== currentTargetHash;
 
   if (sourceChanged && !targetChanged) {
     return { action: "update" };
@@ -113,7 +122,7 @@ function decidePlanAction(previous, renderedHash, currentTargetHash, options = {
   return { action: "unchanged" };
 }
 
-function managedManifestRecord(plan, materialized, targetHash) {
+function managedManifestRecord(plan, materialized, targetHash, extra = {}) {
   const record = {
     status: "managed",
     kind: plan.kind,
@@ -128,10 +137,16 @@ function managedManifestRecord(plan, materialized, targetHash) {
   if (plan.adapterId) {
     record.adapterId = plan.adapterId;
   }
+  if (extra.managedHash) {
+    record.managedHash = extra.managedHash;
+  }
+  if (Array.isArray(extra.managedKeys)) {
+    record.managedKeys = [...extra.managedKeys].sort();
+  }
   return record;
 }
 
-function blockedManifestRecord(plan, materialized, targetHash, reason) {
+function blockedManifestRecord(plan, materialized, targetHash, reason, extra = {}) {
   const record = {
     status: "blocked",
     kind: plan.kind,
@@ -146,6 +161,12 @@ function blockedManifestRecord(plan, materialized, targetHash, reason) {
   };
   if (plan.adapterId) {
     record.adapterId = plan.adapterId;
+  }
+  if (extra.managedHash) {
+    record.managedHash = extra.managedHash;
+  }
+  if (Array.isArray(extra.managedKeys)) {
+    record.managedKeys = [...extra.managedKeys].sort();
   }
   return record;
 }

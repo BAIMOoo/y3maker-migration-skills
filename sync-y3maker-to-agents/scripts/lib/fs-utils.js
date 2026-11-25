@@ -94,6 +94,12 @@ function workspacePaths(workspace) {
   };
 }
 
+const UNABLE_TO_DECODE_CODE = "ERR_UNABLE_TO_DECODE";
+
+function isDecodeError(error) {
+  return Boolean(error && error.code === UNABLE_TO_DECODE_CODE);
+}
+
 function readText(filePath) {
   const raw = fs.readFileSync(filePath);
   const decoders = [
@@ -111,7 +117,9 @@ function readText(filePath) {
       continue;
     }
   }
-  throw new Error(`Unable to decode ${filePath}`);
+  const error = new Error(`无法解码文件（非 UTF-8/GB18030 文本）：${filePath}`);
+  error.code = UNABLE_TO_DECODE_CODE;
+  throw error;
 }
 
 function writeText(filePath, content, dryRun) {
@@ -183,6 +191,7 @@ function collectFiles(root, options = {}) {
 }
 
 module.exports = {
+  UNABLE_TO_DECODE_CODE,
   assertSafeWorkspace,
   collectFiles,
   ensureDir,
@@ -190,6 +199,7 @@ module.exports = {
   getUserHome,
   hashBuffer,
   hashExistingFile,
+  isDecodeError,
   isSameOrInsidePath,
   normalizePathForCompare,
   normalizeSlashes,

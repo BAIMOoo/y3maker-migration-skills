@@ -1146,4 +1146,392 @@ describe("多 Harness 四端组合（--targets all）全链路端到端回归（
       fixture.cleanup();
     }
   });
+
+  it("Slice 6: 收缩 --targets all -> --targets codex 保留取消启用宿主的磁盘文件且不误报 orphaned，输出中文人工核对提示并使 verify 通过", () => {
+    const fixture = createFixture();
+    try {
+      seedRichMultiHarnessWorkspace(fixture);
+      fixture.writeWorkspaceFile(
+        ".y3maker/skills/y3-removed/SKILL.md",
+        "---\nname: y3-removed\ndescription: 即将真正删除的上游技能\n---\n\n正文。\n"
+      );
+
+      // Step 1: 先全四端迁移（project MCP）
+      const allRes = fixture.runApply(["--targets", "all", "--mcp-scope", "project", "--pretty"]);
+      assert.equal(allRes.status, 0, `all apply stderr: ${allRes.stderr}`);
+      assert.equal(fixture.runVerify().status, 0);
+
+      // 记录取消启用宿主的磁盘快照，确保收缩 targets 时绝不删改它们
+      const claudeSkillsBefore = fixture.snapshotTree(".claude/skills");
+      const claudeMcpBefore = fixture.readWorkspaceFile(".mcp.json");
+      const agyPluginBefore = fixture.snapshotTree(".agents/plugins/y3maker-mcp");
+      const dshPatchBefore = fixture.readWorkspaceFile(".dsh/cordis.patch.yml");
+
+      // Step 2: 仅收缩 --targets 为 codex（.y3maker 完整未删）
+      const narrowRes = fixture.runApply(["--targets", "codex", "--mcp-scope", "project", "--pretty"]);
+      assert.equal(narrowRes.status, 0, `narrow apply stderr: ${narrowRes.stderr}`);
+      assert.deepEqual(narrowRes.json.targets, ["codex"]);
+      assert.deepEqual(
+        narrowRes.json.sync.orphaned,
+        [],
+        `仅取消启用宿主时不应误报 orphaned，实际：${JSON.stringify(narrowRes.json.sync.orphaned)}`
+      );
+      assert.deepEqual(narrowRes.json.sync.blocked, []);
+
+      // 取消启用宿主留下的磁盘文件必须原样保留未删除
+      assert.deepEqual(fixture.snapshotTree(".claude/skills"), claudeSkillsBefore);
+      assert.equal(fixture.readWorkspaceFile(".mcp.json"), claudeMcpBefore);
+      assert.deepEqual(fixture.snapshotTree(".agents/plugins/y3maker-mcp"), agyPluginBefore);
+      assert.equal(fixture.readWorkspaceFile(".dsh/cordis.patch.yml"), dshPatchBefore);
+
+      // 应输出清晰中文提示，列出取消启用宿主留下的文件路径供人工核对或清理
+      assert.ok(
+        Array.isArray(narrowRes.json.hints) && narrowRes.json.hints.length > 0,
+        `收缩 --targets 时应在顶层 hints 输出中文保留提示，实际：${JSON.stringify(narrowRes.json.hints)}`
+      );
+      const joinedHints = narrowRes.json.hints.join("\n");
+      for (const expectedPath of [
+        ".claude/skills/y3-sample/SKILL.md",
+        ".mcp.json",
+        ".agents/plugins/y3maker-mcp/plugin.json",
+        ".agents/plugins/y3maker-mcp/mcp_config.json",
+        ".dsh/cordis.patch.yml",
+      ]) {
+        assert.ok(
+          joinedHints.includes(expectedPath),
+          `hints 应列出取消启用宿主保留的文件 ${expectedPath}，实际：${joinedHints}`
+        );
+      }
+
+      // manifest 不得保留会阻断 verify 的 orphaned 记录，verify 必须通过
+      const manifestAfterNarrow = fixture.readWorkspaceJson(".agents/migration/y3maker-manifest.json");
+      assert.deepEqual(manifestAfterNarrow.targets, ["codex"]);
+      assert.equal(
+        Object.values(manifestAfterNarrow.files).some((entry) => entry.status === "orphaned"),
+        false,
+        "manifest 不应包含因取消启用宿主产生的 orphaned 条目"
+      );
+
+      const verifyNarrow = fixture.runVerify(["--pretty"]);
+      assert.equal(
+        verifyNarrow.status,
+        0,
+        `收缩 --targets 为 codex 后 verify 应通过，实际：${verifyNarrow.stdout}`
+      );
+      assert.equal(verifyNarrow.json.ok, true);
+      assert.deepEqual(verifyNarrow.json.issues, []);
+
+      // Step 3: 恢复 all 后，在同一轮既收缩为 codex 又真正删除 .y3maker/skills/y3-removed -> 仅真正删除的源对应文件标记 orphaned
+      const restoreAll = fixture.runApply(["--targets", "all", "--mcp-scope", "project"]);
+      assert.equal(restoreAll.status, 0, `restoreAll stderr: ${restoreAll.stderr}`);
+      fixture.removeWorkspacePath(".y3maker/skills/y3-removed");
+
+      const mixedRes = fixture.runApply(["--targets", "codex", "--mcp-scope", "project", "--pretty"]);
+      assert.equal(mixedRes.status, 0, `mixed apply stderr: ${mixedRes.stderr}`);
+      assert.deepEqual(
+        mixedRes.json.sync.orphaned.map((item) => item.path).sort(),
+        [".agents/skills/y3-removed/SKILL.md", ".claude/skills/y3-removed/SKILL.md"],
+        "仅 .y3maker 中真正被删除的源文件对应目标才应标记为 orphaned"
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("Slice 7: 四端合并 MCP 配置按受管切片哈希判定冲突——用户/宿主修改无关字段叠加源更新时安全合并，手工修改受管条目仍触发 blocked", () => {
+    const fixture = createFixture();
+    try {
+      seedRichMultiHarnessWorkspace(fixture, {
+        mcpSettings: {
+          mcpServers: {
+            "y3-stdio": {
+              type: "stdio",
+              command: "node",
+              args: ["scripts/mcp-v1.js"],
+            },
+            "y3-http": {
+              type: "streamableHttp",
+              url: "https://mcp.example.com/v1",
+            },
+          },
+        },
+      });
+
+      // 预置隔离 Fake Home 四端已有配置
+      fixture.writeHomeFile(
+        ".claude.json",
+        `${JSON.stringify(
+          {
+            numStartups: 10,
+            mcpServers: {
+              "personal-claude": { type: "stdio", command: "npx", args: ["-y", "personal"] },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      fixture.writeHomeFile(
+        ".codex/config.toml",
+        [
+          'model = "gpt-5.4"',
+          "",
+          '[projects."C:\\\\demo"]',
+          'trust_level = "trusted"',
+          "",
+        ].join("\n")
+      );
+      fixture.writeHomeFile(
+        ".gemini/config/mcp_config.json",
+        `${JSON.stringify(
+          {
+            extraSetting: { keep: 1 },
+            mcpServers: {
+              "personal-agy": { command: "node", args: ["personal.js"] },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+      fixture.writeHomeFile(
+        ".dsh/cordis.patch.yml",
+        [
+          "- insert:",
+          '    - id: "existing-user-plugin"',
+          '      name: "@acme/existing"',
+          "",
+        ].join("\n")
+      );
+
+      // Round 1: 初次全四端 user scope 合并
+      const r1 = fixture.runApply(["--targets", "all", "--mcp-scope", "user"]);
+      assert.equal(r1.status, 0, `r1 stderr: ${r1.stderr}`);
+      assert.deepEqual(r1.json.sync.blocked, []);
+      assert.equal(fixture.runVerify().status, 0);
+
+      // Round 2: 同时在四端修改“无关用户/宿主字段” + 更新上游 .y3maker/mcp_settings.json
+      const claudeDisk = fixture.readHomeJson(".claude.json");
+      claudeDisk.numStartups = 11;
+      claudeDisk.mcpServers["personal-extra"] = { type: "stdio", command: "uvx", args: ["extra"] };
+      fixture.writeHomeFile(".claude.json", `${JSON.stringify(claudeDisk, null, 2)}\n`);
+
+      const codexDisk = fixture.readHomeFile(".codex/config.toml");
+      fixture.writeHomeFile(
+        ".codex/config.toml",
+        `${codexDisk.replace('model = "gpt-5.4"', 'model = "gpt-5.5"')}\n# 运行时新增工程信任\n[projects."D:\\\\new-proj"]\ntrust_level = "trusted"\n\n[mcp_servers.user-extra]\ncommand = "uvx"\nargs = ["extra"]\n`
+      );
+
+      const agyDisk = fixture.readHomeJson(".gemini/config/mcp_config.json");
+      agyDisk.extraSetting = { keep: 2, theme: "dark" };
+      agyDisk.mcpServers["agy-extra"] = { command: "python", args: ["extra.py"] };
+      fixture.writeHomeFile(
+        ".gemini/config/mcp_config.json",
+        `${JSON.stringify(agyDisk, null, 2)}\n`
+      );
+
+      const dshDisk = fixture.readHomeFile(".dsh/cordis.patch.yml");
+      fixture.writeHomeFile(
+        ".dsh/cordis.patch.yml",
+        `${dshDisk}    # 用户追加的新插件\n    - id: "my-new-dsh-plugin"\n      name: "@acme/new-plugin"\n`
+      );
+
+      fixture.writeWorkspaceFile(
+        ".y3maker/mcp_settings.json",
+        `${JSON.stringify(
+          {
+            mcpServers: {
+              "y3-stdio": {
+                type: "stdio",
+                command: "node",
+                args: ["scripts/mcp-v2.js"],
+              },
+              "y3-http": {
+                type: "streamableHttp",
+                url: "https://mcp.example.com/v2",
+              },
+              "y3-added": {
+                command: "uvx",
+                args: ["y3-added-mcp"],
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+
+      const r2 = fixture.runApply(["--targets", "all", "--mcp-scope", "user", "--pretty"]);
+      assert.equal(r2.status, 0, `r2 stderr: ${r2.stderr}`);
+      assert.deepEqual(
+        r2.json.sync.blocked,
+        [],
+        `仅修改无关用户字段叠加源更新时不得误报 blocked，实际：${JSON.stringify(r2.json.sync.blocked)}`
+      );
+      for (const expectedUpdated of [
+        "~/.claude.json",
+        "~/.codex/config.toml",
+        "~/.gemini/config/mcp_config.json",
+        "~/.dsh/cordis.patch.yml",
+      ]) {
+        assert.ok(
+          r2.json.sync.updated.includes(expectedUpdated),
+          `应安全合并更新 ${expectedUpdated}，实际 updated：${JSON.stringify(r2.json.sync.updated)}`
+        );
+      }
+
+      // 校验四端均同时保留了用户无关改动并合入了上游 v2 与新增服务
+      const claudeAfterR2 = fixture.readHomeJson(".claude.json");
+      assert.equal(claudeAfterR2.numStartups, 11);
+      assert.ok(claudeAfterR2.mcpServers["personal-extra"]);
+      assert.deepEqual(claudeAfterR2.mcpServers["y3-stdio"].args, ["scripts/mcp-v2.js"]);
+      assert.equal(claudeAfterR2.mcpServers["y3-http"].url, "https://mcp.example.com/v2");
+      assert.ok(claudeAfterR2.mcpServers["y3-added"]);
+
+      const codexAfterR2 = fixture.readHomeFile(".codex/config.toml");
+      assert.ok(codexAfterR2.includes('model = "gpt-5.5"'));
+      assert.ok(codexAfterR2.includes('[projects."D:\\\\new-proj"]'));
+      assert.ok(codexAfterR2.includes("[mcp_servers.user-extra]"));
+      assert.ok(codexAfterR2.includes('args = ["scripts/mcp-v2.js"]'));
+      assert.ok(codexAfterR2.includes('url = "https://mcp.example.com/v2"'));
+      assert.ok(codexAfterR2.includes("[mcp_servers.y3-added]"));
+
+      const agyAfterR2 = fixture.readHomeJson(".gemini/config/mcp_config.json");
+      assert.deepEqual(agyAfterR2.extraSetting, { keep: 2, theme: "dark" });
+      assert.ok(agyAfterR2.mcpServers["agy-extra"]);
+      assert.deepEqual(agyAfterR2.mcpServers["y3-stdio"].args, ["scripts/mcp-v2.js"]);
+      assert.ok(agyAfterR2.mcpServers["y3-added"]);
+
+      const dshAfterR2 = fixture.readHomeFile(".dsh/cordis.patch.yml");
+      assert.ok(dshAfterR2.includes('id: "my-new-dsh-plugin"'));
+      assert.ok(dshAfterR2.includes('- "scripts/mcp-v2.js"'));
+      assert.ok(dshAfterR2.includes('url: "https://mcp.example.com/v2"'));
+      assert.ok(dshAfterR2.includes('id: "y3maker-mcp-y3-added"'));
+
+      const verifyR2 = fixture.runVerify(["--pretty"]);
+      assert.equal(verifyR2.status, 0, `r2 verify 应通过，实际：${verifyR2.stdout}`);
+      assert.equal(verifyR2.json.ok, true);
+
+      // Round 3: 手工修改四端中的“受管 MCP 条目” + 上游再次更新 -> 四端均必须触发 blocked 且保护手工改动
+      claudeAfterR2.mcpServers["y3-stdio"].args = ["scripts/manual-claude.js"];
+      const claudeManualText = `${JSON.stringify(claudeAfterR2, null, 2)}\n`;
+      fixture.writeHomeFile(".claude.json", claudeManualText);
+
+      const codexManualText = codexAfterR2.replace(
+        'args = ["scripts/mcp-v2.js"]',
+        'args = ["scripts/manual-codex.js"]'
+      );
+      fixture.writeHomeFile(".codex/config.toml", codexManualText);
+
+      agyAfterR2.mcpServers["y3-stdio"].args = ["scripts/manual-agy.js"];
+      const agyManualText = `${JSON.stringify(agyAfterR2, null, 2)}\n`;
+      fixture.writeHomeFile(".gemini/config/mcp_config.json", agyManualText);
+
+      const dshManualText = dshAfterR2.replace(
+        '- "scripts/mcp-v2.js"',
+        '- "scripts/manual-dsh.js"'
+      );
+      fixture.writeHomeFile(".dsh/cordis.patch.yml", dshManualText);
+
+      fixture.writeWorkspaceFile(
+        ".y3maker/mcp_settings.json",
+        `${JSON.stringify(
+          {
+            mcpServers: {
+              "y3-stdio": {
+                type: "stdio",
+                command: "node",
+                args: ["scripts/mcp-v3.js"],
+              },
+              "y3-http": {
+                type: "streamableHttp",
+                url: "https://mcp.example.com/v3",
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+
+      const r3 = fixture.runApply(["--targets", "all", "--mcp-scope", "user", "--pretty"]);
+      assert.equal(r3.status, 0, `r3 stderr: ${r3.stderr}`);
+      assert.deepEqual(
+        r3.json.sync.blocked.map((item) => item.path).sort(),
+        [
+          "~/.claude.json",
+          "~/.codex/config.toml",
+          "~/.dsh/cordis.patch.yml",
+          "~/.gemini/config/mcp_config.json",
+        ],
+        "手工修改受管 MCP 条目时四端均必须标记为 blocked"
+      );
+      assert.equal(fixture.readHomeFile(".claude.json"), claudeManualText);
+      assert.equal(fixture.readHomeFile(".codex/config.toml"), codexManualText);
+      assert.equal(fixture.readHomeFile(".gemini/config/mcp_config.json"), agyManualText);
+      assert.equal(fixture.readHomeFile(".dsh/cordis.patch.yml"), dshManualText);
+
+      // 同时验证 project 范围：在 .mcp.json 与 Antigravity 项目插件上修改无关字段 + 上游更新也安全合并
+      const p1 = fixture.runApply(["--targets", "claude,antigravity", "--mcp-scope", "project"]);
+      assert.equal(p1.status, 0, `p1 stderr: ${p1.stderr}`);
+      const projMcp = fixture.readWorkspaceJson(".mcp.json");
+      projMcp.customProjectKey = "keep-me";
+      fixture.writeWorkspaceFile(".mcp.json", `${JSON.stringify(projMcp, null, 2)}\n`);
+      const projAgyPlugin = fixture.readWorkspaceJson(".agents/plugins/y3maker-mcp/plugin.json");
+      projAgyPlugin.author = "y3-team";
+      fixture.writeWorkspaceFile(
+        ".agents/plugins/y3maker-mcp/plugin.json",
+        `${JSON.stringify(projAgyPlugin, null, 2)}\n`
+      );
+      const projAgyMcp = fixture.readWorkspaceJson(".agents/plugins/y3maker-mcp/mcp_config.json");
+      projAgyMcp.mcpServers["custom-proj"] = { command: "node", args: ["custom.js"] };
+      fixture.writeWorkspaceFile(
+        ".agents/plugins/y3maker-mcp/mcp_config.json",
+        `${JSON.stringify(projAgyMcp, null, 2)}\n`
+      );
+
+      fixture.writeWorkspaceFile(
+        ".y3maker/mcp_settings.json",
+        `${JSON.stringify(
+          {
+            mcpServers: {
+              "y3-stdio": {
+                type: "stdio",
+                command: "node",
+                args: ["scripts/mcp-v4.js"],
+              },
+            },
+          },
+          null,
+          2
+        )}\n`
+      );
+
+      const p2 = fixture.runApply(["--targets", "claude,antigravity", "--mcp-scope", "project"]);
+      assert.equal(p2.status, 0, `p2 stderr: ${p2.stderr}`);
+      assert.deepEqual(p2.json.sync.blocked, []);
+      assert.equal(fixture.readWorkspaceJson(".mcp.json").customProjectKey, "keep-me");
+      assert.deepEqual(fixture.readWorkspaceJson(".mcp.json").mcpServers["y3-stdio"].args, [
+        "scripts/mcp-v4.js",
+      ]);
+      assert.equal(
+        fixture.readWorkspaceJson(".agents/plugins/y3maker-mcp/plugin.json").author,
+        "y3-team"
+      );
+      assert.deepEqual(
+        fixture.readWorkspaceJson(".agents/plugins/y3maker-mcp/mcp_config.json").mcpServers[
+          "y3-stdio"
+        ].args,
+        ["scripts/mcp-v4.js"]
+      );
+      assert.ok(
+        fixture.readWorkspaceJson(".agents/plugins/y3maker-mcp/mcp_config.json").mcpServers[
+          "custom-proj"
+        ]
+      );
+      assert.equal(fixture.runVerify().status, 0);
+    } finally {
+      fixture.cleanup();
+    }
+  });
 });

@@ -635,4 +635,88 @@ describe("sync-y3maker-to-agents Codex 适配层（TOML 安全合并与验收）
       fixture.cleanup();
     }
   });
+
+  it("Slice 6: 既有 .codex/config.toml 包含多个 [[profiles]] 各自附带 [profiles.sandbox] 子表时，合并与 verify 均通过并原样保留", () => {
+    const fixture = createFixture();
+    try {
+      seedMinimalY3Maker(fixture, {
+        mcpSettings: {
+          mcpServers: {
+            "y3-tools": {
+              command: "node",
+              args: ["scripts/mcp.js"],
+            },
+          },
+        },
+      });
+
+      const arrayOfTablesToml = [
+        "# 含数组表与嵌套子表的合法 TOML",
+        'model = "gpt-5.4"',
+        "",
+        "[[profiles]]",
+        'name = "fast"',
+        "",
+        "[profiles.sandbox]",
+        'mode = "read-only"',
+        "",
+        "[profiles.sandbox.network]",
+        "enabled = false",
+        "",
+        "[[profiles]]",
+        'name = "full"',
+        "",
+        "[profiles.sandbox]",
+        'mode = "workspace-write"',
+        "",
+        "[profiles.sandbox.network]",
+        "enabled = true",
+        "",
+      ].join("\n");
+      fixture.writeWorkspaceFile(".codex/config.toml", arrayOfTablesToml);
+
+      const applyRes = fixture.runApply(["--targets", "codex", "--mcp-scope", "project", "--pretty"]);
+      assert.equal(applyRes.status, 0, `合并含 [[profiles]] + [profiles.sandbox] 应成功，stderr: ${applyRes.stderr}`);
+
+      const merged = fixture.readWorkspaceFile(".codex/config.toml");
+      assert.ok(
+        merged.includes('[[profiles]]\nname = "fast"\n\n[profiles.sandbox]\nmode = "read-only"\n\n[profiles.sandbox.network]\nenabled = false'),
+        `应原样保留第一个 [[profiles]] 及其子表，实际：\n${merged}`
+      );
+      assert.ok(
+        merged.includes('[[profiles]]\nname = "full"\n\n[profiles.sandbox]\nmode = "workspace-write"\n\n[profiles.sandbox.network]\nenabled = true'),
+        `应原样保留第二个 [[profiles]] 及其子表，实际：\n${merged}`
+      );
+      assert.ok(merged.includes('[mcp_servers.y3-tools]\ncommand = "node"\nargs = ["scripts/mcp.js"]'));
+
+      const verifyRes = fixture.runVerify(["--pretty"]);
+      assert.equal(verifyRes.status, 0, `verify 应接受合法数组表子表，实际：${verifyRes.stdout}`);
+      assert.equal(verifyRes.json.ok, true);
+      assert.deepEqual(verifyRes.json.issues, []);
+
+      // 同一 [[profiles]] 元素内重复定义 [profiles.sandbox] 仍必须被拒绝
+      fixture.writeWorkspaceFile(
+        ".codex/config.toml",
+        [
+          "[[profiles]]",
+          'name = "dup"',
+          "[profiles.sandbox]",
+          'mode = "read-only"',
+          "[profiles.sandbox]",
+          'mode = "full"',
+          "",
+          "[mcp_servers.y3-tools]",
+          'command = "node"',
+          "",
+        ].join("\n")
+      );
+      const dupVerify = fixture.runVerify();
+      assert.equal(dupVerify.status, 1, "同一数组表元素内重复定义子表仍应报错");
+      assert.ok(
+        dupVerify.json.issues.some((i) => i.type === "invalid-mcp-config" && i.path === ".codex/config.toml")
+      );
+    } finally {
+      fixture.cleanup();
+    }
+  });
 });

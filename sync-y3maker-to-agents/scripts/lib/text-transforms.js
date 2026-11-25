@@ -1,8 +1,9 @@
+const fs = require("fs");
 const path = require("path");
 
-const { ACTIVE_PATH_PATTERN, CANONICAL_DIR } = require("./constants");
+const { ACTIVE_PATH_PATTERN, CANONICAL_DIR, TEXT_SUFFIXES } = require("./constants");
 const { normalizeSkillFrontmatterText } = require("./frontmatter");
-const { normalizeSlashes, readText } = require("./fs-utils");
+const { hashBuffer, isDecodeError, normalizeSlashes, readText } = require("./fs-utils");
 
 function rewriteCanonicalPaths(content) {
   return content
@@ -14,14 +15,20 @@ function rewriteCanonicalPaths(content) {
 }
 
 /**
- * 供 Claude Skill Projection（Ticket #3）复用的跨目录相对路径改写辅助函数：
+ * 供 Claude Skill Projection 复用的跨目录相对路径改写辅助函数：
  * 将 ../../rules/、../../memory/、../../knowledge/、../../templates/、../../spec-config.json
- * （含更深层级 ../../../ 变体）统一改写回 .agents/...。
+ * （含更深层级 ../../../ 及正斜杠、反斜杠、混合斜杠变体）统一改写回 .agents/...。
  */
 function rewriteClaudeSkillRelativePaths(content) {
   return content.replace(
-    /(?:\.\.\/){2,}(rules\/|memory\/|knowledge\/|templates\/|spec-config\.json)/g,
-    `${CANONICAL_DIR}/$1`
+    /((?:\.\.[\\/]){2,})(rules[\\/]|memory[\\/]|knowledge[\\/]|templates[\\/]|spec-config\.json)/g,
+    (_match, prefix, target) => {
+      const isPureBackslash = !prefix.includes("/") && !target.includes("/");
+      if (isPureBackslash) {
+        return `${CANONICAL_DIR}\\${target}`;
+      }
+      return `${CANONICAL_DIR}/${target.replace(/\\/g, "/")}`;
+    }
   );
 }
 
@@ -108,6 +115,54 @@ function materializeTextPlan(plan, workspace) {
   });
 }
 
+function materializeFilePlan(plan, workspace) {
+  const rawBuffer = fs.readFileSync(plan.sourceFile);
+  const sourceHash = hashBuffer(rawBuffer);
+  if (!TEXT_SUFFIXES.has(path.extname(plan.sourceFile).toLowerCase())) {
+    return {
+      sourceHash,
+      renderedHash: sourceHash,
+      buffer: rawBuffer,
+      flags: {
+        rewrittenLegacyPaths: false,
+        normalizedSkillFrontmatter: false,
+        appliedSpecialFixes: [],
+      },
+      metadata: {},
+    };
+  }
+
+  let materialized;
+  try {
+    materialized = materializeTextPlan(plan, workspace);
+  } catch (error) {
+    if (isDecodeError(error)) {
+      return {
+        sourceHash,
+        renderedHash: sourceHash,
+        buffer: rawBuffer,
+        flags: {
+          rewrittenLegacyPaths: false,
+          normalizedSkillFrontmatter: false,
+          appliedSpecialFixes: [],
+        },
+        metadata: {
+          binaryTextSuffixFallback: true,
+        },
+      };
+    }
+    throw error;
+  }
+
+  return {
+    sourceHash,
+    renderedHash: hashBuffer(materialized.buffer),
+    buffer: materialized.buffer,
+    flags: materialized.flags,
+    metadata: {},
+  };
+}
+
 function extractCandidatePaths(text) {
   const results = [];
   for (const match of text.matchAll(ACTIVE_PATH_PATTERN)) {
@@ -123,6 +178,7 @@ function extractCandidatePaths(text) {
 module.exports = {
   applyCanonicalTextTransforms,
   extractCandidatePaths,
+  materializeFilePlan,
   materializeTextPlan,
   rewriteCanonicalPaths,
   rewriteClaudeSkillRelativePaths,

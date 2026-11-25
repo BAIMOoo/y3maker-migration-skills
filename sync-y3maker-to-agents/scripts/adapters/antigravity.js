@@ -1,66 +1,32 @@
+/**
+ * Antigravity（agy）宿主适配层：
+ * - 直接原生复用 Canonical Store（.agents/skills/），不重复复制资产。
+ * - 按显式 MCP Scope 生成项目级插件（.agents/plugins/y3maker-mcp/）或合并至 ~/.gemini/config/mcp_config.json。
+ */
 const fs = require("fs");
 const path = require("path");
 
 const { readText } = require("../lib/fs-utils");
+const {
+  EXPLICIT_STREAMABLE_HTTP_TYPES,
+  computeJsonFieldsManagedHash,
+  computeJsonMcpManagedHash,
+  isLegacySseServer,
+  isPlainObject,
+  normalizeStringMap,
+  resolveServerUrl,
+} = require("../lib/mcp-source");
 
 const PLUGIN_NAME = "y3maker-mcp";
 const PLUGIN_DEFAULT_VERSION = "1.0.0";
-const PLUGIN_DEFAULT_DESCRIPTION = "Migrated Y3Maker MCP servers";
+const PLUGIN_DEFAULT_DESCRIPTION = "由 Y3Maker 迁移生成的 MCP 服务配置";
+const PLUGIN_MANAGED_FIELDS = ["description", "name", "version"];
 const PLUGIN_DIR_RELATIVE = `.agents/plugins/${PLUGIN_NAME}`;
 const PLUGIN_MANIFEST_RELATIVE = `${PLUGIN_DIR_RELATIVE}/plugin.json`;
 const PLUGIN_MCP_RELATIVE = `${PLUGIN_DIR_RELATIVE}/mcp_config.json`;
 const USER_MCP_RELATIVE = "~/.gemini/config/mcp_config.json";
 
-const EXPLICIT_STREAMABLE_HTTP_TYPES = new Set(["http", "streamablehttp", "streamable-http"]);
 const SUPPORTED_EXPLICIT_TYPES = new Set(["stdio", ...EXPLICIT_STREAMABLE_HTTP_TYPES]);
-
-function isPlainObject(value) {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function hasLegacySseUrlPath(url) {
-  if (!url) {
-    return false;
-  }
-  try {
-    const parsed = new URL(url);
-    return /\/sse(?:\/|$)/i.test(parsed.pathname);
-  } catch (_error) {
-    return /\/sse(?:[/?#]|$)/i.test(url);
-  }
-}
-
-function isLegacySseServer(rawType, url) {
-  if (rawType === "sse") {
-    return true;
-  }
-  if (
-    rawType !== "stdio" &&
-    url &&
-    !EXPLICIT_STREAMABLE_HTTP_TYPES.has(rawType) &&
-    hasLegacySseUrlPath(url)
-  ) {
-    return true;
-  }
-  return false;
-}
-
-function normalizeStringMap(raw) {
-  if (!isPlainObject(raw)) {
-    return null;
-  }
-  const entries = Object.entries(raw);
-  if (entries.length === 0) {
-    return null;
-  }
-  const normalized = {};
-  for (const [key, value] of entries) {
-    if (value !== undefined && value !== null) {
-      normalized[key] = String(value);
-    }
-  }
-  return Object.keys(normalized).length > 0 ? normalized : null;
-}
 
 function readExistingJsonObject(filePath, displayPath) {
   if (!fs.existsSync(filePath)) {
@@ -99,14 +65,9 @@ function convertAntigravityServers(legacyMcp) {
 
     const rawType = typeof entry.type === "string" ? entry.type.trim().toLowerCase() : "";
     const command = typeof entry.command === "string" ? entry.command.trim() : "";
-    const url =
-      typeof entry.url === "string" && entry.url.trim()
-        ? entry.url.trim()
-        : typeof entry.serverUrl === "string" && entry.serverUrl.trim()
-          ? entry.serverUrl.trim()
-          : "";
+    const url = resolveServerUrl(entry);
 
-    if (isLegacySseServer(rawType, url)) {
+    if (isLegacySseServer(entry)) {
       skipped.push(name);
       warnings.push(
         `Antigravity 不支持旧版 HTTP+SSE 传输，已跳过 MCP 服务器 "${name}"；请改用 Streamable HTTP（如 /mcp 端点）或通过 stdio 桥接工具（如 mcp-remote）接入。`
@@ -396,8 +357,9 @@ module.exports = {
         filePlans: [
           {
             kind: "mcp-config",
-            isMcpConfig: true,
             mergeExisting: true,
+            managedKeys: [...PLUGIN_MANAGED_FIELDS],
+            computeManagedHash: computeJsonFieldsManagedHash,
             sourceFile: legacyMcp.filePath,
             sourceRelative: legacyMcp.relativePath,
             targetFile: pluginManifestFile,
@@ -411,8 +373,9 @@ module.exports = {
           },
           {
             kind: "mcp-config",
-            isMcpConfig: true,
             mergeExisting: true,
+            managedKeys: [...servers].sort(),
+            computeManagedHash: computeJsonMcpManagedHash,
             sourceFile: legacyMcp.filePath,
             sourceRelative: legacyMcp.relativePath,
             targetFile: pluginMcpFile,
@@ -447,8 +410,9 @@ module.exports = {
         filePlans: [
           {
             kind: "mcp-config",
-            isMcpConfig: true,
             mergeExisting: true,
+            managedKeys: [...servers].sort(),
+            computeManagedHash: computeJsonMcpManagedHash,
             sourceFile: legacyMcp.filePath,
             sourceRelative: legacyMcp.relativePath,
             targetFile: userMcpFile,
