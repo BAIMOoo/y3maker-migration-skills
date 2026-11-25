@@ -1,10 +1,14 @@
 ---
 name: sync-y3maker-to-claude
-description: 将遗留的 Y3Maker / CodeMaker 项目助手体系迁移到 Claude Code 原生项目结构中，并在 `.y3maker/` 后续更新时把差异安全同步到现有 `.claude/` 副本。用于存在 `.y3maker/`、旧 `.codemaker` 路径、旧 MCP 配置、遗留 rules/memory/skills，且需要：(1) 首次迁移到 Claude Code 的 `.claude/`、`.mcp.json`、`CLAUDE.md` 相关结构，(2) 把旧路径重写为当前项目结构，(3) 显式选择把 `.y3maker/mcp_settings.json` 转换到项目级 `.mcp.json`、用户级 Claude MCP 配置或跳过，(4) 对已迁移项目执行重复同步/差异合并，或 (5) 审核哪些内容应保留为 `.claude` 归档、哪些规则值得浓缩进 `CLAUDE.md` 时务必使用。
+description: "[已废弃，请改用 sync-y3maker-to-agents] 将遗留的 Y3Maker / CodeMaker 项目助手体系迁移到 Claude Code 原生项目结构中，并在 `.y3maker/` 后续更新时把差异安全同步到现有 `.claude/` 副本。用于存在 `.y3maker/`、旧 `.codemaker` 路径、旧 MCP 配置、遗留 rules/memory/skills，且需要：(1) 首次迁移到 Claude Code 的 `.claude/`、`.mcp.json`、`CLAUDE.md` 相关结构，(2) 把旧路径重写为当前项目结构，(3) 显式选择把 `.y3maker/mcp_settings.json` 转换到项目级 `.mcp.json`、用户级 Claude MCP 配置或跳过，(4) 对已迁移项目执行重复同步/差异合并，或 (5) 审核哪些内容应保留为 `.claude` 归档、哪些规则值得浓缩进 `CLAUDE.md` 时务必使用。"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 ---
 
-# 将 Y3Maker 迁移到 Claude Code
+# 将 Y3Maker 迁移到 Claude Code（已废弃 / Deprecated）
+
+> **⚠️ 已废弃（Deprecated — 冻结维护）**：本单宿主迁移技能已由统一多 Harness 技能 [`sync-y3maker-to-agents`](../sync-y3maker-to-agents/SKILL.md) 替代并停止新增特性。保留当前目录仅用于兼容既有安装 URL，不再回填新功能。
+>
+> **迁移至新版方式**：请安装 `sync-y3maker-to-agents`（以 `.agents/` 作为唯一 **Canonical Store**，启用 `--targets claude` 时通过受 **Migration Manifest** 保护的单向 **Skill Projection** 将 `.agents/skills/` 投影至 `.claude/skills/`，自动将跨目录引用回指 `.agents/` 并保留规范化后的 `allowed-tools`，不再重复复制非 skill 目录）。在已迁移项目上先运行新版 `inventory`，其 `legacyTransition` 会只读扫描 `.claude/migration/y3maker-manifest.json` 并列出手工改动与可评估清理的旧子目录，同时保护活跃的 `.claude/skills` 与 `.mcp.json`。
 
 先迁移遗留内容的副本，再处理兼容性；不要改动原始 `.y3maker/`。默认先跑脚本，再处理脚本无法判断的人工项。
 

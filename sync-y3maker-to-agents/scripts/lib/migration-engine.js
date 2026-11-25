@@ -626,6 +626,21 @@ function applyMigration(workspace, options = {}) {
     if (currentTargetHash === null) {
       continue;
     }
+    const previousScope =
+      previous.targetScope || (targetRelative.startsWith("~/") ? "user" : "project");
+    if (
+      previous.kind === "mcp-config" &&
+      legacyMcp.exists &&
+      mcpScope &&
+      previousScope !== mcpScope
+    ) {
+      const scopeHint = `MCP 迁移范围已从 ${previousScope} 切换为 ${mcpScope}，原配置文件 ${targetRelative} 已保留未删除，请按需人工核对或清理`;
+      appendUnique(mcp.hints, [scopeHint]);
+      if (previous.adapterId && mcp.targets[previous.adapterId]) {
+        appendUnique(mcp.targets[previous.adapterId].hints, [scopeHint]);
+      }
+      continue;
+    }
     nextFiles[targetRelative] = orphanedManifestRecord(previous, currentTargetHash);
     sync.orphaned.push({
       path: targetRelative,

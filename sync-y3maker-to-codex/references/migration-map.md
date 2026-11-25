@@ -1,4 +1,6 @@
-# 迁移映射
+# 迁移映射（已废弃 / Deprecated）
+
+> **⚠️ 已废弃（Deprecated — 冻结维护）**：`sync-y3maker-to-codex` 已停止新增功能，仅保留以兼容既有安装链接。请改用统一多 Harness 技能 [`sync-y3maker-to-agents`](../../sync-y3maker-to-agents/SKILL.md) 及新版参考文档 [`sync-y3maker-to-agents/references/migration-map.md`](../../sync-y3maker-to-agents/references/migration-map.md)。
 
 ## 脚本入口
 
