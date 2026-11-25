@@ -1,0 +1,7 @@
+interface:
+  display_name: "Y3Maker 多宿主统一迁移"
+  short_description: "将遗留 .y3maker 资产统一迁移到 .agents/ 共享正本，并按需适配 Codex、Claude Code、Antigravity 与 DSH。"
+  default_prompt: "使用 $sync-y3maker-to-agents 盘点并迁移当前工作区的遗留 .y3maker 资产到 .agents/，按我指定的目标宿主与 MCP 范围执行安全同步与验收。"
+
+policy:
+  allow_implicit_invocation: true

@@ -1,9 +1,13 @@
 ---
 name: sync-y3maker-to-codex
-description: 将遗留的 Y3Maker / CodeMaker 项目助手体系迁移到 Codex 原生项目结构中，并在 `.y3maker/` 后续更新时把差异安全同步到现有 `.codex/` 副本。用于存在 `.y3maker/`、旧 `.codemaker` 路径、旧 MCP 配置、遗留 rules/memory/skills，且需要：(1) 首次迁移到 `.codex/`，(2) 把旧路径重写为当前项目结构，(3) 显式选择把 `.y3maker/mcp_settings.json` 转换到项目级或用户级 Codex 配置，(4) 对已迁移项目执行重复同步/差异合并，或 (5) 审核哪些内容应保留为 `.codex` 归档、哪些事实值得写入 `.omx` 时使用。
+description: "[已废弃，请改用 sync-y3maker-to-agents] 将遗留的 Y3Maker / CodeMaker 项目助手体系迁移到 Codex 原生项目结构中，并在 `.y3maker/` 后续更新时把差异安全同步到现有 `.codex/` 副本。用于存在 `.y3maker/`、旧 `.codemaker` 路径、旧 MCP 配置、遗留 rules/memory/skills，且需要：(1) 首次迁移到 `.codex/`，(2) 把旧路径重写为当前项目结构，(3) 显式选择把 `.y3maker/mcp_settings.json` 转换到项目级或用户级 Codex 配置，(4) 对已迁移项目执行重复同步/差异合并，或 (5) 审核哪些内容应保留为 `.codex` 归档、哪些事实值得写入 `.omx` 时使用。"
 ---
 
-# 将 Y3Maker 迁移到 Codex
+# 将 Y3Maker 迁移到 Codex（已废弃 / Deprecated）
+
+> **⚠️ 已废弃（Deprecated — 冻结维护）**：本单宿主迁移技能已由统一多 Harness 技能 [`sync-y3maker-to-agents`](../sync-y3maker-to-agents/SKILL.md) 替代并停止新增特性。保留当前目录仅用于兼容既有安装 URL，不再回填新功能。
+>
+> **迁移至新版方式**：请安装 `sync-y3maker-to-agents`（以 `.agents/` 作为唯一 **Canonical Store**，Codex 直接原生读取 `.agents/skills/` 并采用安全 TOML 区块合并管理 `.codex/config.toml` / `~/.codex/config.toml`）。在已迁移项目上先运行新版 `inventory`，其 `legacyTransition` 会只读扫描 `.codex/migration/y3maker-manifest.json` 并列出存在手工改动的文件与可评估清理的旧子目录，确保零丢失平稳过渡。
 
 先迁移遗留内容的副本，再处理兼容性；不要改动原始 `.y3maker/`。默认先跑脚本，再处理脚本无法判断的人工项。
 
