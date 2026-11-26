@@ -28,7 +28,7 @@ const TEXT_SUFFIXES = new Set([
 
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 const ACTIVE_PATH_PATTERN =
-  /`((?:(?:\.agents|\.claude|\.omx|\.omc|openspec|scripts)\/[^`\n]+)|(?:\.\.\/){2,}(?:(?:rules|memory|knowledge|templates)\/[^`\n]+|spec-config\.json))`/g;
+  /`((?:(?:\.agents|\.claude|openspec|scripts)\/[^`\n]+)|(?:\.\.\/){2,}(?:(?:rules|memory|knowledge|templates)\/[^`\n]+|spec-config\.json))`/g;
 
 const MANIFEST_VERSION = 1;
 const MANIFEST_RELATIVE_PATH = ".agents/migration/y3maker-manifest.json";

@@ -26,6 +26,8 @@ describe("sync-y3maker-to-agents 核心迁移（Canonical Store 与 CLI 契约�
       assert.equal(res.json.exists[".agents"], false);
       assert.equal(res.json.exists["AGENTS.md"], false);
       assert.equal(res.json.exists["CLAUDE.md"], false);
+      assert.equal(Object.prototype.hasOwnProperty.call(res.json.exists, ".omx"), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(res.json.exists, ".omc"), false);
 
       assert.deepEqual(res.json.legacy.skills, ["y3-sample"]);
       assert.deepEqual(res.json.legacy.rules, ["api-safety.mdc"]);
@@ -519,6 +521,7 @@ describe("sync-y3maker-to-agents 核心迁移（Canonical Store 与 CLI 契约�
           "- 章节引用：`.codemaker/rules/api-safety.mdc §2.1`",
           "- 锚点引用：`<agent>/knowledge/overview.md#section-1`",
           "- 技能根脚本：`scripts/run.py`",
+          "- 不再维护的目录忽略：`.omx/project-memory.json`、`.omc/project-memory.json`",
           "- 占位符跳过：`.agents/rules/{name}.mdc`、`.agents/skills/...`、`openspec/reports/report/`",
           "",
         ].join("\n")

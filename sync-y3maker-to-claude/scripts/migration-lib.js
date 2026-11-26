@@ -26,7 +26,7 @@ const SKILL_ITEM_EXCLUDES = {
   "y3-obj-gen": new Set([".claude-plugin"]),
 };
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
-const ACTIVE_PATH_PATTERN = /`((?:\.claude|\.omc|\.mcp\.json|CLAUDE\.md|openspec|scripts)\/[^`\n]*|(?:\.claude|\.omc|openspec|scripts)\/[^`\n]+)`/g;
+const ACTIVE_PATH_PATTERN = /`((?:\.claude|\.mcp\.json|CLAUDE\.md|openspec|scripts)\/[^`\n]*|(?:\.claude|openspec|scripts)\/[^`\n]+)`/g;
 const MANIFEST_VERSION = 1;
 const MANIFEST_RELATIVE_PATH = ".claude/migration/y3maker-manifest.json";
 const MCP_SCOPES = new Set(["project", "user", "skip"]);
@@ -86,7 +86,6 @@ function workspacePaths(workspace) {
     workspace: root,
     legacy: path.join(root, ".y3maker"),
     claude: path.join(root, ".claude"),
-    omc: path.join(root, ".omc"),
     claudeMd: path.join(root, "CLAUDE.md"),
     projectMcp: path.join(root, ".mcp.json"),
     manifest: path.join(root, MANIFEST_RELATIVE_PATH.replaceAll("/", path.sep)),
@@ -207,7 +206,6 @@ function inventoryWorkspace(workspace) {
     exists: {
       ".y3maker": fs.existsSync(paths.legacy),
       ".claude": fs.existsSync(paths.claude),
-      ".omc": fs.existsSync(paths.omc),
       "CLAUDE.md": fs.existsSync(paths.claudeMd),
       ".mcp.json": fs.existsSync(paths.projectMcp),
     },

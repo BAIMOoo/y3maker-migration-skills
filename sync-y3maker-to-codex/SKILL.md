@@ -1,6 +1,6 @@
 ---
 name: sync-y3maker-to-codex
-description: "[已废弃，请改用 sync-y3maker-to-agents] 将遗留的 Y3Maker / CodeMaker 项目助手体系迁移到 Codex 原生项目结构中，并在 `.y3maker/` 后续更新时把差异安全同步到现有 `.codex/` 副本。用于存在 `.y3maker/`、旧 `.codemaker` 路径、旧 MCP 配置、遗留 rules/memory/skills，且需要：(1) 首次迁移到 `.codex/`，(2) 把旧路径重写为当前项目结构，(3) 显式选择把 `.y3maker/mcp_settings.json` 转换到项目级或用户级 Codex 配置，(4) 对已迁移项目执行重复同步/差异合并，或 (5) 审核哪些内容应保留为 `.codex` 归档、哪些事实值得写入 `.omx` 时使用。"
+description: "[已废弃，请改用 sync-y3maker-to-agents] 将遗留的 Y3Maker / CodeMaker 项目助手体系迁移到 Codex 原生项目结构中，并在 `.y3maker/` 后续更新时把差异安全同步到现有 `.codex/` 副本。用于存在 `.y3maker/`、旧 `.codemaker` 路径、旧 MCP 配置、遗留 rules/memory/skills，且需要：(1) 首次迁移到 `.codex/`，(2) 把旧路径重写为当前项目结构，(3) 显式选择把 `.y3maker/mcp_settings.json` 转换到项目级或用户级 Codex 配置，(4) 对已迁移项目执行重复同步/差异合并，或 (5) 审核哪些内容应保留为 `.codex` 归档、哪些规则值得浓缩进 `AGENTS.md` 时使用。"
 ---
 
 # 将 Y3Maker 迁移到 Codex（已废弃 / Deprecated）
@@ -15,7 +15,7 @@ description: "[已废弃，请改用 sync-y3maker-to-agents] 将遗留的 Y3Make
 
 ### 1. 盘点工作区
 
-先确认遗留面、Codex 面、OMX 面，以及已有同步状态：
+先确认遗留面、Codex 面，以及已有同步状态：
 
 ```powershell
 node ".codex/skills/sync-y3maker-to-codex/scripts/run-migration.js" inventory --workspace "."
@@ -23,7 +23,7 @@ node ".codex/skills/sync-y3maker-to-codex/scripts/run-migration.js" inventory --
 
 `inventory` 会返回：
 
-- `.y3maker` / `.codex` / `.omx` 是否存在
+- `.y3maker` / `.codex` 是否存在
 - 遗留 `knowledge` / `memory` / `rules` / `skills` 目录概况
 - `.codex/migration/y3maker-manifest.json` 是否存在
 - 已跟踪文件数、`blocked` 数、`orphaned` 数
@@ -109,12 +109,11 @@ manifest 位于：
 - 不要把脚本没验证过的结果说成“已完成迁移”
 - 如果验收发现某个依赖、脚本或被引用文件在原始 `.y3maker/` 中本来就不存在，只能明确报告缺失
 - 对于 `.y3maker/` 中本来不存在的文件，不要伪造内容或补占位文件
-- 只有在确认 OMX 已安装且可用时，才把活跃项目事实写入 `.omx`；否则保留在 `.codex/memory/` 作为归档，并在结果中明确写出 `skipped`
 
 ## 保留给人工判断的部分
 
 - 哪些遗留规则应该浓缩进根目录 `AGENTS.md`
-- 哪些 memory 只是归档，哪些事实值得写入 `.omx/project-memory.json`、OMX wiki 或 notepad
+- 哪些 memory 只是归档，哪些事实值得转存至宿主的长期记忆系统
 - 哪些 skill 的 `scripts/`、`references/`、`assets/` 仍然值得保留
 - 验收脚本发现但无法自动修复的缺失依赖，应如何向用户汇报
 - 对 `blocked` / `orphaned` 项是手工合并、保留现状，还是进一步清理

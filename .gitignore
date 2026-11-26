@@ -21,7 +21,6 @@ coverage/
 **/.codex/
 **/.claude/
 **/.y3maker/
-**/.omx/
 **/.mcp.json
 
 # User-level config/secrets should never be committed

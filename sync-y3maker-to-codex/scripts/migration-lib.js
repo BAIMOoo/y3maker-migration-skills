@@ -28,7 +28,7 @@ const SKILL_ITEM_EXCLUDES = {
   "y3-obj-gen": new Set([".claude-plugin"]),
 };
 const FRONTMATTER_PATTERN = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
-const ACTIVE_PATH_PATTERN = /`((?:\.codex|\.omx|openspec|scripts)\/[^`\n]+)`/g;
+const ACTIVE_PATH_PATTERN = /`((?:\.codex|openspec|scripts)\/[^`\n]+)`/g;
 const MANIFEST_VERSION = 1;
 const MANIFEST_RELATIVE_PATH = ".codex/migration/y3maker-manifest.json";
 const MCP_SCOPES = new Set(["project", "user", "skip"]);
@@ -88,7 +88,6 @@ function workspacePaths(workspace) {
     workspace: root,
     legacy: path.join(root, ".y3maker"),
     codex: path.join(root, ".codex"),
-    omx: path.join(root, ".omx"),
     agents: path.join(root, "AGENTS.md"),
     manifest: path.join(root, MANIFEST_RELATIVE_PATH.replaceAll("/", path.sep)),
   };
@@ -208,7 +207,6 @@ function inventoryWorkspace(workspace) {
     exists: {
       ".y3maker": fs.existsSync(paths.legacy),
       ".codex": fs.existsSync(paths.codex),
-      ".omx": fs.existsSync(paths.omx),
       "AGENTS.md": fs.existsSync(paths.agents),
     },
     manifest: {

@@ -23,7 +23,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob, Grep, AskUserQuestion
 
 ### 1. 盘点工作区
 
-先确认遗留面、Claude 面、OMC 面，以及已有同步状态：
+先确认遗留面、Claude 面，以及已有同步状态：
 
 ```bash
 node "./scripts/run-migration.js" inventory --workspace "." --pretty
@@ -31,7 +31,7 @@ node "./scripts/run-migration.js" inventory --workspace "." --pretty
 
 `inventory` 会返回：
 
-- `.y3maker` / `.claude` / `.omc` 是否存在
+- `.y3maker` / `.claude` 是否存在
 - 遗留 `knowledge` / `memory` / `rules` / `skills` 目录概况
 - `.claude/migration/y3maker-manifest.json` 是否存在
 - 已跟踪文件数、`blocked` 数、`orphaned` 数
@@ -117,12 +117,11 @@ manifest 位于：
 - 不要把脚本没验证过的结果说成“已完成迁移”
 - 如果验收发现某个依赖、脚本或被引用文件在原始 `.y3maker/` 中本来就不存在，只能明确报告缺失
 - 对于 `.y3maker/` 中本来不存在的文件，不要伪造内容或补占位文件
-- 只有在确认 OMC 已安装且可用时，才把活跃项目事实写入 `.omc`；否则保留在 `.claude/memory/` 作为归档，并在结果中明确写出 `skipped`
 
 ## 保留给人工判断的部分
 
 - 哪些遗留规则应该浓缩进根目录 `CLAUDE.md`
-- 哪些 memory 只是归档，哪些事实值得写入 `.omc/project-memory.json`、OMC wiki 或 notepad
+- 哪些 memory 只是归档，哪些事实值得转存至宿主的长期记忆系统
 - 哪些 skill 的 `scripts/`、`references/`、`assets/` 仍然值得保留
 - 验收脚本发现但无法自动修复的缺失依赖，应如何向用户汇报
 - 对 `blocked` / `orphaned` 项是手工合并、保留现状，还是进一步清理

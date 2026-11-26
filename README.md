@@ -138,6 +138,6 @@ node --test tests/*.test.js
 请不要提交：
 
 - 个人配置文件
-- 真实项目的 `.y3maker/`、`.agents/`、`.codex/`、`.claude/`、`.dsh/`、`.omx/`、`.omc/`
+- 真实项目的 `.y3maker/`、`.agents/`、`.codex/`、`.claude/`、`.dsh/`
 - 迁移生成的 manifest
 - 日志、临时文件、密钥或 token
